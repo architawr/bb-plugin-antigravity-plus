@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,10 @@ import {
   AGY_ACP_PROXY_STATE_DIR_ENV,
   AgyAcpProxy,
   createInstructionStore,
+  describeOutdatedAgy,
   extractSystemInstructions,
+  isAgyVersionTooOld,
+  parseAgyVersion,
   withSystemPrompt,
 } from '../acp-proxy.ts';
 import { resolveAntigravityLaunchSpec } from '../cli.ts';
@@ -182,4 +185,31 @@ test('the host module runs as the proxy process in front of the agent', async ()
     child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('recognizes an agy CLI too old for acp', () => {
+  assert.deepEqual(parseAgyVersion('1.5.14\n'), [1, 5, 14]);
+  assert.deepEqual(parseAgyVersion('agy version 1.1.24 (abc)'), [1, 1, 24]);
+  assert.equal(parseAgyVersion('dev build'), undefined);
+  assert.equal(isAgyVersionTooOld([1, 1, 24]), true);
+  assert.equal(isAgyVersionTooOld([1, 4, 99]), true);
+  assert.equal(isAgyVersionTooOld([1, 5, 0]), false);
+  assert.equal(isAgyVersionTooOld([2, 0, 0]), false);
+  assert.match(describeOutdatedAgy('/bin/agy', () => '1.1.24'), /Antigravity CLI 1\.1\.24 \(\/bin\/agy\) is too old for bb: `agy acp` needs 1\.5\.0 or later\. Run `agy update`/);
+  assert.equal(describeOutdatedAgy('/bin/agy', () => '1.5.14'), undefined);
+  assert.equal(describeOutdatedAgy('/bin/agy', () => { throw new Error('ENOENT'); }), undefined);
+});
+
+test('the proxy explains an outdated agy before its own error', { skip: process.platform === 'win32' }, async () => {
+  const agent = fileURLToPath(new URL('./fake-old-agy.mjs', import.meta.url));
+  chmodSync(agent, 0o755);
+  const host = fileURLToPath(new URL('../host.ts', import.meta.url));
+  const child = spawn(process.execPath, [host, AGY_ACP_PROXY_FLAG, agent, 'acp'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const code = await new Promise(resolve => child.on('close', resolve));
+  assert.equal(code, 2);
+  const lines = stderr.trim().split('\n');
+  assert.match(lines[0], /Antigravity CLI 1\.1\.24 .* is too old for bb/);
+  assert.equal(lines[1], 'Error: unexpected argument "acp".');
 });

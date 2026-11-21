@@ -26,8 +26,10 @@
  * - Verified against agy 1.5.14: a live session/resume keeps model, thought_level and mode.
  * - The instruction store grows by one small file per Antigravity thread; nothing prunes it.
  * - The proxy never reads stdin until `run` is called, so importing this module starts nothing.
+ * - agy's stderr is held until agy first answers (at most 5 s), so when a pre-1.5.0 CLI fails
+ *   (it has no `acp` subcommand) the proxy's "run agy update" explanation leads the error bb shows.
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -39,6 +41,9 @@ const INSTRUCTIONS_OPEN = "<system_instructions>";
 const INSTRUCTIONS_CLOSE = "</system_instructions>";
 const INTERNAL_ID_PREFIX = "bb-agy-acp-proxy:";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+/** `agy acp` first shipped in 1.5.0. */
+export const MIN_AGY_ACP_VERSION = [1, 5, 0] as const;
+const STDERR_HOLD_MS = 5_000;
 
 type Json = Record<string, any>;
 
@@ -227,6 +232,31 @@ function parse(line: string): Json | undefined {
   }
 }
 
+/** Reads "1.5.14" (or the first x.y.z) from `agy --version` output. */
+export function parseAgyVersion(text: string): [number, number, number] | undefined {
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(text);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+export function isAgyVersionTooOld(version: readonly number[]): boolean {
+  for (let i = 0; i < MIN_AGY_ACP_VERSION.length; i++) {
+    if (version[i] !== MIN_AGY_ACP_VERSION[i]) return version[i] < MIN_AGY_ACP_VERSION[i];
+  }
+  return false;
+}
+
+/** When agy fails before answering, explains an outdated CLI; undefined when the version is fine or unknown. */
+export function describeOutdatedAgy(command: string, readVersion: () => string): string | undefined {
+  let version: [number, number, number] | undefined;
+  try {
+    version = parseAgyVersion(readVersion());
+  } catch {
+    return undefined;
+  }
+  if (!version || !isAgyVersionTooOld(version)) return undefined;
+  return `Antigravity CLI ${version.join(".")} (${command}) is too old for bb: \`agy acp\` needs ${MIN_AGY_ACP_VERSION.join(".")} or later. Run \`agy update\` on this machine, then retry.`;
+}
+
 /** Runs the proxy as this process: argv is the agy command and its arguments. */
 export function runAgyAcpProxy(argv: string[]): void {
   const [command, ...args] = argv;
@@ -235,7 +265,18 @@ export function runAgyAcpProxy(argv: string[]): void {
     log("missing agy command");
     process.exit(64);
   }
-  const child = spawn(command, args, { stdio: ["pipe", "pipe", "inherit"], env: process.env, shell: false });
+  const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: process.env, shell: false });
+  // Hold agy's stderr until it answers (or briefly), so an outdated-CLI explanation can lead the error bb shows.
+  let answered = false;
+  let held: Buffer[] | undefined = [];
+  const releaseStderr = () => {
+    if (!held) return;
+    for (const chunk of held) process.stderr.write(chunk);
+    held = undefined;
+  };
+  const holdTimer = setTimeout(releaseStderr, STDERR_HOLD_MS);
+  holdTimer.unref();
+  child.stderr.on("data", (chunk: Buffer) => (held ? held.push(chunk) : process.stderr.write(chunk)));
   const proxy = new AgyAcpProxy({
     toAgent: line => { child.stdin.write(`${line}\n`); },
     toClient: line => { process.stdout.write(`${line}\n`); },
@@ -243,14 +284,27 @@ export function runAgyAcpProxy(argv: string[]): void {
     log,
   });
   createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", line => proxy.fromClient(line));
-  createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", line => proxy.fromAgent(line));
+  createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", line => {
+    if (!answered) {
+      answered = true;
+      releaseStderr();
+    }
+    proxy.fromAgent(line);
+  });
   process.stdin.on("end", () => child.stdin.end());
   child.stdin.on("error", () => {});
   child.on("error", error => {
     log(`could not start ${command}: ${error.message}`);
     process.exit(127);
   });
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  child.on("close", (code, signal) => {
+    if (!answered && code !== 0 && held) {
+      const outdated = describeOutdatedAgy(command, () => execFileSync(command, ["--version"], { encoding: "utf8", timeout: 10_000, env: process.env }));
+      if (outdated) process.stderr.write(`${outdated}\n`);
+    }
+    releaseStderr();
+    process.exit(code ?? (signal ? 1 : 0));
+  });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => child.kill(signal));
   }

@@ -50,7 +50,7 @@ Check your remaining quota per model group (`Gemini 7d`, `Gemini 5h`, `Claude/GP
 
 ### 1. Prepare the agent host
 
-You need BB 0.48+, Node.js 22+, and a separately installed Antigravity CLI with an eligible account. The Antigravity desktop application alone is insufficient. Your provider's quota and charges still apply.
+You need BB 0.48+, Node.js 22+, and a separately installed Antigravity CLI 1.5.0 or later (verified with 1.5.14; run `agy update` to upgrade) with an eligible account. The Antigravity desktop application alone is insufficient. Your provider's quota and charges still apply.
 
 Run these commands on the machine where the agent will execute:
 

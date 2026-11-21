@@ -12,6 +12,6 @@ The plugin inherits the CLI's sandbox configuration. Sandbox availability depend
 
 ## Requirements
 
-Requires BB 0.48+, Node.js 22+, a separately installed Antigravity CLI with `agy acp` on the agent host's PATH, and an eligible signed-in account. Provider quota or charges apply. The desktop application alone is insufficient; remote hosts need their own CLI installation and sign-in.
+Requires BB 0.48+, Node.js 22+, a separately installed Antigravity CLI 1.5.0 or later (`agy acp`; verified with 1.5.14) on the agent host's PATH, and an eligible signed-in account. Provider quota or charges apply. The desktop application alone is insufficient; remote hosts need their own CLI installation and sign-in.
 
 Windows has been tested locally; macOS and Linux need validation. Automatic CLI installation and forks are not supported. Manual compaction uses the CLI's native `/compact`.
