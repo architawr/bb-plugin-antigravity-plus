@@ -2,6 +2,7 @@ import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { experimental_hostToolchain } from "@get-bb/plugin-sdk/process";
+import { AGY_ACP_PROXY_FLAG, AGY_ACP_PROXY_STATE_DIR_ENV } from "./acp-proxy.ts";
 
 export function resolveAntigravityCommand(command: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null {
   const resolved = experimental_hostToolchain.resolve(command, options);
@@ -50,9 +51,20 @@ function applyProfileFlags(spec: Record<string, any>, env: Record<string, unknow
   }
 }
 
+export interface AgyAcpProxyLaunch {
+  /** The host artifact, which runs the proxy when started with AGY_ACP_PROXY_FLAG. */
+  hostFile: string;
+  /** Where the proxy keeps per-session state; omit to keep it in memory only. */
+  stateDir?: string;
+}
+
 // Resolve on the agent host, where the CLI is installed, rather than the BB server.
-export function resolveAntigravityLaunchSpec(request: any): void {
+// With `proxy`, session launches go through the plugin's ACP proxy (acp-proxy.ts);
+// provider/* requests keep calling agy directly, because health checks run `<command> --version`
+// and usage runs `<command> -p /usage`.
+export function resolveAntigravityLaunchSpec(request: any, proxy?: AgyAcpProxyLaunch): void {
   const params = request?.params;
+  const method = typeof request?.method === "string" ? request.method : "";
   const targets = [
     { options: params?.providerOptions, envVars: params?.envVars },
     { options: params?.options?.providerOptions, envVars: params?.options?.envVars },
@@ -61,10 +73,15 @@ export function resolveAntigravityLaunchSpec(request: any): void {
     const spec = options?.acpLaunchSpec;
     if (!spec || typeof spec !== "object") continue;
     const mergedEnv = { ...process.env, ...spec.env, ...envVars };
-    if (spec.command === "agy") {
+    const isAgy = spec.command === "agy";
+    if (isAgy) {
       const command = resolveAntigravityCommand(spec.command, { cwd: spec.cwd, env: mergedEnv });
       if (command) spec.command = command;
     }
     applyProfileFlags(spec, mergedEnv);
+    if (!isAgy || !proxy || options.agyAcpProxy === false || method.startsWith("provider/")) continue;
+    spec.args = [proxy.hostFile, AGY_ACP_PROXY_FLAG, spec.command, ...(Array.isArray(spec.args) ? spec.args : [])];
+    spec.command = process.execPath;
+    if (proxy.stateDir) spec.env = { ...spec.env, [AGY_ACP_PROXY_STATE_DIR_ENV]: proxy.stateDir };
   }
 }

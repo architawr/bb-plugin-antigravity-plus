@@ -9,6 +9,7 @@ Verified against Antigravity CLI 1.5.1 and BB SDK 0.6.109 on Windows. A terminal
 | Subagent delegation control | Optional `subagentsDisabled` setting instructs agents to delegate via BB (`bb thread spawn --parent-self`) and blocks native subagent tool approvals |
 | Command & tool presentation | Displays `toolSummary` descriptions (`commandDescriptionsEnabled`), clean command output and exit codes, destructive **Outside of sandbox** badges (`BypassSandbox`), and native delegation cards |
 | Model and reasoning choices | Discovered from CLI; account dependent |
+| BB instructions | Sent as Antigravity's native system prompt (`_meta.antigravity.systemPrompt.append`) by the plugin's ACP proxy, and re-applied when a session is loaded or resumed (`acpProxy` setting, on by default) |
 | Plan/Build | One Mode selector, mapped to native Plan/Accept edits; duplicate Plan action removed |
 | Accept edits / Full access | Shared bridge permission policy |
 | CLI terminal sandbox | Inherits settings; optional request-sandbox flag for new threads |

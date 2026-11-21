@@ -14,6 +14,7 @@
     "prompt-mode.ts",
     "mode-controls.ts",
     "usage.ts",
+    "acp-proxy.ts",
     "dist/*.js",
     "dist/*.css",
     "dist/*.meta.json",

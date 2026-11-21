@@ -7,6 +7,9 @@ import { mapPromptMode } from "./prompt-mode.ts";
 import { interceptSubagentApproval, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
 import { resolveAntigravityLaunchSpec } from "./cli.ts";
+import { AGY_ACP_PROXY_FLAG, runAgyAcpProxy } from "./acp-proxy.ts";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 registerAntigravityAcpDialect();
 
@@ -45,6 +48,8 @@ function parseUsageRequest(parsed: unknown): { id: string | number; command: str
 }
 
 let stdoutFilterInstalled = false;
+const hostFile = fileURLToPath(import.meta.url);
+let proxyStateDir: string | undefined;
 const autoApproveThreads = new Map<string, boolean>();
 const commandDescriptionsThreads = new Map<string, boolean>();
 
@@ -150,14 +155,15 @@ function ensureStdoutFilter() {
 
 export const experimental_providerBridge = {
   ...experimental_acpProviderBridge,
-  start() {
+  start(context?: { dataDir?: string }) {
+    if (typeof context?.dataDir === "string") proxyStateDir = join(context.dataDir, "acp-proxy", "instructions");
     ensureStdoutFilter();
   },
   handleLine(line: string) {
     ensureStdoutFilter();
     let parsed: unknown;
     try { parsed = JSON.parse(line); } catch { parsed = null; }
-    resolveAntigravityLaunchSpec(parsed);
+    resolveAntigravityLaunchSpec(parsed, { hostFile, stateDir: proxyStateDir });
     if (parsed !== null) line = JSON.stringify(parsed);
     const withDefaults = applyAntigravityDefaults(line, parsed);
     const subagentTransformed = transformSubagentRequest(withDefaults.line, withDefaults.parsed);
@@ -195,3 +201,6 @@ export const experimental_providerBridge = {
     experimental_acpProviderBridge.handleLine(mapPromptMode(subagentTransformed.line, subagentTransformed.parsed));
   },
 };
+
+// bb imports this module as the provider bridge; agy sessions start it again as the ACP proxy.
+if (process.argv[2] === AGY_ACP_PROXY_FLAG) runAgyAcpProxy(process.argv.slice(3));

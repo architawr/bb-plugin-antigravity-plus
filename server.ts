@@ -36,6 +36,12 @@ export default async function antigravity(bb: BbPluginApi) {
       description: "Display Antigravity tool summaries on command execution cards.",
       default: true,
     },
+    acpProxy: {
+      type: "boolean",
+      label: "Send bb instructions as the Antigravity system prompt",
+      description: "Run new sessions through the plugin's ACP proxy, which gives bb's thread and skill instructions to Antigravity as its system prompt and re-applies them when a thread is reopened. Turn off to connect to agy acp directly. Applies to newly started sessions.",
+      default: true,
+    },
     enabled: {
       type: "boolean",
       label: "Enable Antigravity CLI",
@@ -62,6 +68,7 @@ export default async function antigravity(bb: BbPluginApi) {
         autoApprove: settings.autoApprove === true,
         providerSubagentsEnabled: settings.subagentsDisabled !== true,
         commandDescriptionsEnabled: settings.commandDescriptionsEnabled !== false,
+        agyAcpProxy: settings.acpProxy !== false,
         acpDialect: ANTIGRAVITY_ACP_DIALECT_ID,
         acpLaunchSpec: {
           ...launchSpec,

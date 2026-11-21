@@ -12,6 +12,7 @@ test('registers a native ACP provider without changing credentials or bypassing 
         assert.equal(descriptors.sandbox.default, false);
         assert.equal(descriptors.subagentsDisabled.default, false);
         assert.equal(descriptors.commandDescriptionsEnabled.default, true);
+        assert.equal(descriptors.acpProxy.default, true);
         assert.equal(descriptors.enabled.default, true);
         return { get: async () => ({ enabled: true }), onChange() {} };
       },
@@ -52,6 +53,9 @@ test('sandbox is opt-in and only changes fixed CLI arguments', async () => {
   }
   for (const autoApprove of [undefined, false, true, 'true']) {
     assert.equal(provider.deriveProviderOptions({ settings: { autoApprove } }).autoApprove, autoApprove === true);
+  }
+  for (const acpProxy of [undefined, true, false, 'false']) {
+    assert.equal(provider.deriveProviderOptions({ settings: { acpProxy } }).agyAcpProxy, acpProxy !== false);
   }
   for (const subagentsDisabled of [undefined, false, true, 'true']) {
     assert.equal(

@@ -29,6 +29,7 @@ An experimental community provider that connects [BB](https://getbb.app) to the 
 - **Native skills:** discover your workspace and personal Antigravity skills in BB.
 - **Usage & quota limits:** view per-model-group quota windows (`Gemini`, `Claude/GPT`, `Argon`) in BB's sidebar and usage settings.
 - **CLI sandbox setting:** request the CLI terminal sandbox for new threads.
+- **Native system prompt:** BB's thread and skill instructions reach Antigravity as its system prompt and stay in effect after a thread is reopened.
 - **A settings toggle:** show or hide the provider without editing configuration files.
 
 ## Preview
@@ -155,6 +156,8 @@ The **Request CLI terminal sandbox** setting adds `--sandbox` for new threads. O
 **Automatically approve ACP permission requests** is off by default. When enabled, the plugin answers Antigravity ACP permission requests automatically in Accept edits mode, including commands requesting execution outside the CLI sandbox. It takes effect on new turns, keeps the selected BB permission mode and direct ACP filesystem restrictions, and does not override a host policy that denies permission escalation. Requests without an allow option and other interactions continue to BB. Full access already auto-approves these requests.
 
 **Disable provider subagents** is off by default. When enabled, the plugin instructs Antigravity CLI not to use its native subagent tools (`invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`) so agents delegate work through BB threads (`bb thread spawn --parent-self`), and automatically denies native subagent approval prompts (taking precedence over automatic approval).
+
+**Send bb instructions as the Antigravity system prompt** is on by default. New sessions then run through a small ACP proxy built into the plugin: it removes the `<system_instructions>` block BB places at the top of a thread's first message, gives it to Antigravity as its system prompt, and re-applies it whenever the thread is reopened. The proxy keeps one small file per session under the plugin's data directory. Turn it off to connect BB to `agy acp` directly.
 
 **Show command descriptions** is on by default. When enabled, command execution cards display Antigravity's `toolSummary` as the title with the raw command line as the subtitle, along with an **Outside of sandbox** badge whenever `BypassSandbox` is requested.
 
