@@ -10,6 +10,7 @@ import {
   AGY_ACP_PROXY_FLAG,
   AGY_ACP_PROXY_STATE_DIR_ENV,
   AgyAcpProxy,
+  advertiseFork,
   createInstructionStore,
   describeOutdatedAgy,
   extractSystemInstructions,
@@ -212,4 +213,58 @@ test('the proxy explains an outdated agy before its own error', { skip: process.
   const lines = stderr.trim().split('\n');
   assert.match(lines[0], /Antigravity CLI 1\.1\.24 .* is too old for bb/);
   assert.equal(lines[1], 'Error: unexpected argument "acp".');
+});
+
+test('advertises session/fork only when the proxy can fork', () => {
+  const init = { id: 1, method: 'initialize', params: { protocolVersion: 1 } };
+  const result = { id: 1, result: { agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {}, close: {} } } } };
+  const withFork = harness();
+  withFork.proxy = new AgyAcpProxy({ toAgent: l => withFork.toAgent.push(JSON.parse(l)), toClient: l => withFork.toClient.push(JSON.parse(l)), store: withFork.store, fork: () => 'x' });
+  withFork.proxy.fromClient(line(init));
+  withFork.proxy.fromAgent(line(result));
+  assert.deepEqual(withFork.toClient[0].result.agentCapabilities.sessionCapabilities, { resume: {}, close: {}, fork: {} });
+  assert.equal(withFork.toClient[0].result.agentCapabilities.loadSession, true);
+  const without = harness();
+  without.proxy.fromClient(line(init));
+  without.proxy.fromAgent(line(result));
+  assert.equal(without.toClient[0].result.agentCapabilities.sessionCapabilities.fork, undefined);
+  assert.deepEqual(advertiseFork({ id: 2, result: {} }).result.agentCapabilities.sessionCapabilities, { fork: {} });
+});
+
+function forkHarness(fork) {
+  const h = harness();
+  h.proxy = new AgyAcpProxy({ toAgent: l => h.toAgent.push(JSON.parse(l)), toClient: l => h.toClient.push(JSON.parse(l)), store: h.store, fork, log: m => h.logs.push(m) });
+  return h;
+}
+
+test('forks by copying the conversation and resuming the copy with the source instructions', () => {
+  const forked = [];
+  const h = forkHarness(source => { forked.push(source); return 'copy-1'; });
+  h.store.set('src', 'Use bb rules.');
+  const mcp = [{ name: 'bb-bridge', command: 'node', args: [], env: [] }];
+  h.proxy.fromClient(line({ id: 9, method: 'session/fork', params: { sessionId: 'src', cwd: '/work', mcpServers: mcp, additionalDirectories: ['/extra'] } }));
+  assert.deepEqual(forked, ['src']);
+  assert.equal(h.store.get('copy-1'), 'Use bb rules.');
+  const resume = h.toAgent[0];
+  assert.equal(resume.method, 'session/resume');
+  assert.deepEqual(resume.params, { sessionId: 'copy-1', cwd: '/work', mcpServers: mcp, additionalDirectories: ['/extra'], _meta: { antigravity: { systemPrompt: { append: 'Use bb rules.' } } } });
+  h.proxy.fromAgent(line({ id: resume.id, result: { configOptions: [{ id: 'model' }], sessionId: 'ignored' } }));
+  assert.deepEqual(h.toClient, [{ jsonrpc: '2.0', id: 9, result: { configOptions: [{ id: 'model' }], sessionId: 'copy-1' } }]);
+});
+
+test('reports fork failures to bb as errors', () => {
+  const copyFails = forkHarness(() => { throw new Error('disk full'); });
+  copyFails.proxy.fromClient(line({ id: 9, method: 'session/fork', params: { sessionId: 'src', cwd: '/work', mcpServers: [] } }));
+  assert.equal(copyFails.toAgent.length, 0);
+  assert.match(copyFails.toClient[0].error.message, /Could not fork the Antigravity conversation: disk full/);
+
+  const openFails = forkHarness(() => 'copy-1');
+  openFails.proxy.fromClient(line({ id: 9, method: 'session/fork', params: { sessionId: 'src', cwd: '/work', mcpServers: [] } }));
+  assert.equal(openFails.toAgent[0].params._meta, undefined, 'no instructions stored for the source');
+  openFails.proxy.fromAgent(line({ id: openFails.toAgent[0].id, error: { code: -32000, message: 'nope' } }));
+  assert.match(openFails.toClient[0].error.message, /could not open it: nope/);
+
+  const noFork = harness();
+  noFork.proxy.fromClient(line({ id: 9, method: 'session/fork', params: { sessionId: 'src' } }));
+  assert.equal(noFork.toAgent[0].method, 'session/fork', 'without a forker the request reaches agy unchanged');
 });

@@ -71,6 +71,6 @@ test('sandbox is opt-in and only changes fixed CLI arguments', async () => {
   }
   assert.ok(provider.experimental_nativeSkillRoots.user.includes('.gemini/antigravity-cli/skills'));
   assert.ok(provider.experimental_nativeSkillRoots.project.includes('.agents/skills'));
-  assert.equal(provider.capabilities.fork, 'none');
+  assert.equal(provider.capabilities.fork, 'tip');
   assert.equal(provider.capabilities.supportsManualCompaction, true);
 });

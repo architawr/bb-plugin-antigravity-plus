@@ -15,6 +15,7 @@
     "mode-controls.ts",
     "usage.ts",
     "acp-proxy.ts",
+    "agy-fork.ts",
     "dist/*.js",
     "dist/*.css",
     "dist/*.meta.json",

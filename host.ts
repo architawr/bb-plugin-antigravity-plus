@@ -203,4 +203,4 @@ export const experimental_providerBridge = {
 };
 
 // bb imports this module as the provider bridge; agy sessions start it again as the ACP proxy.
-if (process.argv[2] === AGY_ACP_PROXY_FLAG) runAgyAcpProxy(process.argv.slice(3));
+if (process.argv[2] === AGY_ACP_PROXY_FLAG) void runAgyAcpProxy(process.argv.slice(3));

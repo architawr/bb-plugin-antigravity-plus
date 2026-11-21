@@ -29,6 +29,7 @@ An experimental community provider that connects [BB](https://getbb.app) to the 
 - **Native skills:** discover your workspace and personal Antigravity skills in BB.
 - **Usage & quota limits:** view per-model-group quota windows (`Gemini`, `Claude/GPT`, `Argon`) in BB's sidebar and usage settings.
 - **CLI sandbox setting:** request the CLI terminal sandbox for new threads.
+- **Fork threads:** fork an Antigravity thread at its latest message; the new thread continues from a copy of the CLI conversation.
 - **Native system prompt:** BB's thread and skill instructions reach Antigravity as its system prompt and stay in effect after a thread is reopened.
 - **A settings toggle:** show or hide the provider without editing configuration files.
 
@@ -167,7 +168,7 @@ The plugin stores these boolean preferences. BB and the CLI can retain their nor
 
 See the [capability comparison](docs/FEATURES.md) for verified features and remaining gaps.
 
-Automatic CLI installation, conversation forking, and native thread archive/rename synchronization are not advertised. Manual compaction uses the CLI's native `/compact` and needs a recent CLI (verified on 1.5.14). The plugin depends on your installed CLI and the shared BB ACP bridge.
+Automatic CLI installation, forking from an earlier message, and native thread archive/rename synchronization are not advertised. Forking a thread at its latest message works through the plugin's ACP proxy. Manual compaction uses the CLI's native `/compact` and needs a recent CLI (verified on 1.5.14). The plugin depends on your installed CLI and the shared BB ACP bridge.
 
 ## Troubleshooting
 

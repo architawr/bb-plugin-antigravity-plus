@@ -10,6 +10,10 @@
  * the first prompt, applies it with a live session/resume, and re-injects it whenever the
  * bridge loads or resumes that session later.
  *
+ * Second behaviour: session/fork. agy does not advertise it, so the proxy adds it to the
+ * initialize result and implements it by copying the conversation (agy-fork.ts) and opening
+ * the copy with session/resume. Only tip forks; bb's bridge supports nothing else for ACP.
+ *
  * Design notes:
  * - The host artifact doubles as the proxy executable: host.ts rewrites the agy launch
  *   spec to `node <host.mjs> --agy-acp-proxy <agy> acp ...` on the agent host, so nothing
@@ -33,6 +37,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { forkAgyConversation, resolveAgyAppDataDir, type SqliteDatabaseClass } from "./agy-fork.ts";
 
 export const AGY_ACP_PROXY_FLAG = "--agy-acp-proxy";
 export const AGY_ACP_PROXY_STATE_DIR_ENV = "BB_AGY_ACP_PROXY_STATE_DIR";
@@ -113,12 +118,15 @@ export interface AgyAcpProxyOptions {
   toAgent(line: string): void;
   toClient(line: string): void;
   store: InstructionStore;
+  /** Copies an agy conversation and returns the new id; when set, the proxy advertises session/fork. */
+  fork?(sourceSessionId: string): string;
   log?(message: string): void;
 }
 
 export class AgyAcpProxy {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly newSessionRequests = new Map<unknown, SessionContext>();
+  private readonly initializeRequests = new Set<unknown>();
   private readonly internal = new Map<string, (response: Json) => void>();
   private readonly queue: string[] = [];
   private blocked = 0;
@@ -139,8 +147,14 @@ export class AgyAcpProxy {
     if (isRequest(message)) {
       const params: Json = message.params && typeof message.params === "object" ? message.params : {};
       switch (message.method) {
+        case "initialize":
+          if (this.options.fork) this.initializeRequests.add(message.id);
+          break;
         case "session/new":
           this.newSessionRequests.set(message.id, { cwd: params.cwd, mcpServers: params.mcpServers });
+          break;
+        case "session/fork":
+          if (this.options.fork) return this.forkSession(message, params);
           break;
         case "session/load":
         case "session/resume":
@@ -160,6 +174,9 @@ export class AgyAcpProxy {
       if (callback) {
         this.internal.delete(message.id);
         return callback(message);
+      }
+      if (this.initializeRequests.delete(message.id) && message.result) {
+        return this.options.toClient(JSON.stringify(advertiseFork(message)));
       }
       const context = this.newSessionRequests.get(message.id);
       if (context) {
@@ -207,6 +224,41 @@ export class AgyAcpProxy {
     return true;
   }
 
+  /**
+   * ACP session/fork at the tip: copy the agy conversation, carry its instructions over, and open
+   * the copy with session/resume. bb may then close it here and resume it in the new thread's agy.
+   */
+  private forkSession(message: Json, params: Json): void {
+    const reply = (body: Json) => this.options.toClient(JSON.stringify({ jsonrpc: "2.0", id: message.id, ...body }));
+    const sourceId = params.sessionId;
+    if (typeof sourceId !== "string") {
+      return reply({ error: { code: -32602, message: "session/fork needs a sessionId" } });
+    }
+    let forkedId: string;
+    try {
+      forkedId = this.options.fork!(sourceId);
+    } catch (error) {
+      return reply({ error: { code: -32603, message: `Could not fork the Antigravity conversation: ${error instanceof Error ? error.message : String(error)}` } });
+    }
+    const instructions = this.options.store.get(sourceId);
+    if (instructions !== undefined) this.options.store.set(forkedId, instructions);
+    const mcpServers = Array.isArray(params.mcpServers) ? params.mcpServers : [];
+    this.sessions.set(forkedId, { cwd: params.cwd, mcpServers });
+    const { sessionId: _source, _meta, ...rest } = params;
+    this.request("session/resume", {
+      ...rest,
+      sessionId: forkedId,
+      mcpServers,
+      ...(instructions !== undefined ? { _meta: withSystemPrompt(_meta, instructions) } : _meta !== undefined ? { _meta } : {}),
+    }, response => {
+      if (response.error) {
+        reply({ error: { code: -32603, message: `Forked the Antigravity conversation but could not open it: ${response.error.message ?? JSON.stringify(response.error)}` } });
+      } else {
+        reply({ result: { ...(response.result && typeof response.result === "object" ? response.result : {}), sessionId: forkedId } });
+      }
+    });
+  }
+
   private request(method: string, params: Json, onResponse: (response: Json) => void): void {
     const id = `${INTERNAL_ID_PREFIX}${++this.seq}`;
     this.blocked++;
@@ -221,6 +273,14 @@ export class AgyAcpProxy {
   private drain(): void {
     while (this.blocked === 0 && this.queue.length > 0) this.fromClient(this.queue.shift()!);
   }
+}
+
+/** Adds session/fork to an initialize result's session capabilities. */
+export function advertiseFork(response: Json): Json {
+  const result = response.result ?? {};
+  const capabilities = result.agentCapabilities ?? {};
+  const session = { ...(capabilities.sessionCapabilities ?? {}), fork: {} };
+  return { ...response, result: { ...result, agentCapabilities: { ...capabilities, sessionCapabilities: session } } };
 }
 
 function parse(line: string): Json | undefined {
@@ -257,14 +317,27 @@ export function describeOutdatedAgy(command: string, readVersion: () => string):
   return `Antigravity CLI ${version.join(".")} (${command}) is too old for bb: \`agy acp\` needs ${MIN_AGY_ACP_VERSION.join(".")} or later. Run \`agy update\` on this machine, then retry.`;
 }
 
+/** Loads node:sqlite when this Node has it; forking is off otherwise. */
+async function loadSqlite(): Promise<SqliteDatabaseClass | undefined> {
+  try {
+    const sqlite: any = await import("node:sqlite");
+    return sqlite.DatabaseSync as SqliteDatabaseClass;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Runs the proxy as this process: argv is the agy command and its arguments. */
-export function runAgyAcpProxy(argv: string[]): void {
+export async function runAgyAcpProxy(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
   const log = (message: string) => process.stderr.write(`agy-acp-proxy: ${message}\n`);
   if (!command) {
     log("missing agy command");
     process.exit(64);
   }
+  const Database = await loadSqlite();
+  if (!Database) log("node:sqlite is unavailable in this Node.js; session/fork is not offered");
+  const appDataDir = resolveAgyAppDataDir(args);
   const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: process.env, shell: false });
   // Hold agy's stderr until it answers (or briefly), so an outdated-CLI explanation can lead the error bb shows.
   let answered = false;
@@ -281,6 +354,7 @@ export function runAgyAcpProxy(argv: string[]): void {
     toAgent: line => { child.stdin.write(`${line}\n`); },
     toClient: line => { process.stdout.write(`${line}\n`); },
     store: createInstructionStore(process.env[AGY_ACP_PROXY_STATE_DIR_ENV] || undefined, log),
+    ...(Database ? { fork: (sourceId: string) => forkAgyConversation(appDataDir, sourceId, Database, undefined, log) } : {}),
     log,
   });
   createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", line => proxy.fromClient(line));
