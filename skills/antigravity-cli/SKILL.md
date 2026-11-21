@@ -64,5 +64,6 @@ bb settings usage --refresh --json
 
 ## Limits
 
-- Session fork/rewind (`fork: "none"`), manual `/compact`, service tiers, and native thread archive/rename are not supported.
+- Session fork/rewind (`fork: "none"`), service tiers, and native thread archive/rename are not supported.
+- Manual compaction runs the CLI's native `/compact`; it needs a recent CLI (verified on 1.5.14).
 - Native skills are indexed from workspace `.agents/skills` and `.agent/skills`, and from user `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills`, and `~/.gemini/config/skills`.
