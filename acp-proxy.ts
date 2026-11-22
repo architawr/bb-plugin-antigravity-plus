@@ -14,6 +14,11 @@
  * initialize result and implements it by copying the conversation (agy-fork.ts) and opening
  * the copy with session/resume. Only tip forks; bb's bridge supports nothing else for ACP.
  *
+ * Third behaviour: compaction outcomes. bb compacts by prompting "/compact" and counts any
+ * end_turn as success. A real agy compaction (1.5.14) ends with only a usage update. When the
+ * model answers instead (agy passed "/compact" to it, as on a new session, with thoughts, tool
+ * calls or chat text), the proxy adds a failed `compaction_update`, so bb shows a failure.
+ *
  * Design notes:
  * - The host artifact doubles as the proxy executable: host.ts rewrites the agy launch
  *   spec to `node <host.mjs> --agy-acp-proxy <agy> acp ...` on the agent host, so nothing
@@ -131,6 +136,7 @@ export class AgyAcpProxy {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly newSessionRequests = new Map<unknown, SessionContext>();
   private readonly initializeRequests = new Set<unknown>();
+  private readonly compactions = new Map<unknown, { sessionId: string; text: string; modelActed: boolean }>();
   private readonly internal = new Map<string, (response: Json) => void>();
   private readonly queue: string[] = [];
   private blocked = 0;
@@ -164,6 +170,9 @@ export class AgyAcpProxy {
         case "session/resume":
           return this.options.toAgent(this.reapplyInstructions(message, params) ?? line);
         case "session/prompt":
+          if (isCompactPrompt(params) && typeof params.sessionId === "string") {
+            this.compactions.set(message.id, { sessionId: params.sessionId, text: "", modelActed: false });
+          }
           if (this.liftInstructions(message, params, line)) return;
           break;
       }
@@ -173,11 +182,30 @@ export class AgyAcpProxy {
 
   fromAgent(line: string): void {
     const message = parse(line);
+    if (message?.method === "session/update" && this.compactions.size > 0) this.recordCompactionText(message);
     if (message && isResponse(message)) {
       const callback = typeof message.id === "string" ? this.internal.get(message.id) : undefined;
       if (callback) {
         this.internal.delete(message.id);
         return callback(message);
+      }
+      const compaction = this.compactions.get(message.id);
+      if (compaction) {
+        this.compactions.delete(message.id);
+        const reply = compaction.text.trim();
+        if (compaction.modelActed && message.result?.stopReason === "end_turn") {
+          const reason = reply
+            ? `Antigravity did not compact the conversation: ${reply.slice(0, 500)}`
+            : "Antigravity did not compact the conversation: the CLI passed /compact to the model instead of running it.";
+          this.options.toClient(JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: compaction.sessionId,
+              update: { sessionUpdate: "compaction_update", compactionId: `${INTERNAL_ID_PREFIX}compact-${++this.seq}`, status: "failed", error: reason },
+            },
+          }));
+        }
       }
       if (this.initializeRequests.delete(message.id) && message.result) {
         return this.options.toClient(JSON.stringify(advertiseFork(message)));
@@ -190,6 +218,17 @@ export class AgyAcpProxy {
       }
     }
     this.options.toClient(line);
+  }
+
+  private recordCompactionText(message: Json): void {
+    const update = message.params?.update;
+    const kind = update?.sessionUpdate;
+    if (kind !== "agent_message_chunk" && kind !== "agent_thought_chunk" && kind !== "tool_call") return;
+    for (const compaction of this.compactions.values()) {
+      if (compaction.sessionId !== message.params.sessionId) continue;
+      compaction.modelActed = true;
+      if (kind === "agent_message_chunk" && update.content?.type === "text") compaction.text += update.content.text ?? "";
+    }
   }
 
   private reapplyInstructions(message: Json, params: Json): string | undefined {
@@ -277,6 +316,12 @@ export class AgyAcpProxy {
   private drain(): void {
     while (this.blocked === 0 && this.queue.length > 0) this.fromClient(this.queue.shift()!);
   }
+}
+
+/** bb's compaction request: a prompt that is exactly "/compact". */
+function isCompactPrompt(params: Json): boolean {
+  const prompt = params.prompt;
+  return Array.isArray(prompt) && prompt.length === 1 && prompt[0]?.type === "text" && String(prompt[0].text).trim() === "/compact";
 }
 
 /** Adds session/fork to an initialize result's session capabilities. */

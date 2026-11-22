@@ -18,7 +18,7 @@ Verified against Antigravity CLI 1.5.1 and BB SDK 0.6.109 on Windows. A terminal
 | Existing session load | Native session/load verified; full BB restart recovery not tested |
 | Session fork | Fork at the latest message: the plugin's ACP proxy advertises session/fork, copies the CLI conversation (database with its ids swapped, `brain/` folder, title) and opens the copy. Needs Node.js with `node:sqlite` |
 | Session rewind / fork at an earlier message | Not supported: BB's ACP bridge forks only at the tip, and the CLI does not expose `/rewind` over ACP |
-| Manual compaction | Supported: BB's Compact action sends `/compact`, which `agy acp` runs as its native compaction command (verified on CLI 1.5.14 by inspecting the compacted conversation; CLI 1.5.1 answered it as conversational text) |
+| Manual compaction | Supported: BB's Compact action sends `/compact`, which `agy acp` runs as its native compaction command (verified on CLI 1.5.14 by inspecting the compacted conversation; CLI 1.5.1 answered it as conversational text). When the CLI passes `/compact` to the model instead, as it does on a session with no history, the plugin's ACP proxy reports the compaction as failed rather than letting BB show it as done |
 | Subscription quota/usage | Supported via `agy -p "/usage" --output-format json` and `provider-usage.v1` |
 | Native archive/rename | Disabled: bridge does not implement these operations |
 | BB Auto permission profile | Unsupported by the shared ACP bridge |

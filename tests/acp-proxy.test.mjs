@@ -296,3 +296,48 @@ test('with BB_AGY_ACP_PROXY=0 a started proxy relays lines unchanged and offers 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('reports a chat reply to /compact as a failed compaction, and leaves real compactions alone', () => {
+  const chunk = (sessionId, text) => line({ method: 'session/update', params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
+  const compact = id => line({ id, method: 'session/prompt', params: { sessionId: 's1', prompt: [{ type: 'text', text: '/compact' }] } });
+
+  const failed = harness();
+  failed.proxy.fromClient(compact(4));
+  failed.proxy.fromAgent(chunk('s1', 'There is nothing to compact yet.'));
+  failed.proxy.fromAgent(chunk('other', 'unrelated'));
+  failed.proxy.fromAgent(line({ id: 4, result: { stopReason: 'end_turn' } }));
+  const methods = failed.toClient.map(m => m.method ?? `response:${m.id}`);
+  assert.deepEqual(methods, ['session/update', 'session/update', 'session/update', 'response:4'], 'the failure precedes the response');
+  const update = failed.toClient[2].params.update;
+  assert.equal(failed.toClient[2].params.sessionId, 's1');
+  assert.equal(update.sessionUpdate, 'compaction_update');
+  assert.equal(update.status, 'failed');
+  assert.match(update.compactionId, /^bb-agy-acp-proxy:compact-/);
+  assert.equal(update.error, 'Antigravity did not compact the conversation: There is nothing to compact yet.');
+
+  const real = harness();
+  real.proxy.fromClient(compact(5));
+  real.proxy.fromAgent(line({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'usage_update', used: 10, size: 100 } } }));
+  real.proxy.fromAgent(line({ id: 5, result: { stopReason: 'end_turn' } }));
+  assert.equal(real.toClient.some(m => m.params?.update?.sessionUpdate === 'compaction_update'), false);
+
+  const cancelled = harness();
+  cancelled.proxy.fromClient(compact(6));
+  cancelled.proxy.fromAgent(chunk('s1', 'partial'));
+  cancelled.proxy.fromAgent(line({ id: 6, result: { stopReason: 'cancelled' } }));
+  assert.equal(cancelled.toClient.some(m => m.params?.update?.sessionUpdate === 'compaction_update'), false, 'bb already treats cancelled as interrupted');
+
+  const toolOnly = harness();
+  toolOnly.proxy.fromClient(compact(8));
+  toolOnly.proxy.fromAgent(line({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } } } }));
+  toolOnly.proxy.fromAgent(line({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'ls' } } }));
+  toolOnly.proxy.fromAgent(line({ id: 8, result: { stopReason: 'end_turn' } }));
+  const toolOnlyUpdate = toolOnly.toClient.find(m => m.params?.update?.sessionUpdate === 'compaction_update');
+  assert.match(toolOnlyUpdate.params.update.error, /passed \/compact to the model/);
+
+  const ordinary = harness();
+  ordinary.proxy.fromClient(line({ id: 7, method: 'session/prompt', params: { sessionId: 's1', prompt: [{ type: 'text', text: 'compact this file please' }] } }));
+  ordinary.proxy.fromAgent(chunk('s1', 'Sure.'));
+  ordinary.proxy.fromAgent(line({ id: 7, result: { stopReason: 'end_turn' } }));
+  assert.equal(ordinary.toClient.some(m => m.params?.update?.sessionUpdate === 'compaction_update'), false);
+});
