@@ -158,8 +158,6 @@ The **Request CLI terminal sandbox** setting adds `--sandbox` for new threads. O
 
 **Disable provider subagents** is off by default. When enabled, the plugin instructs Antigravity CLI not to use its native subagent tools (`invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`) so agents delegate work through BB threads (`bb thread spawn --parent-self`), and automatically denies native subagent approval prompts (taking precedence over automatic approval).
 
-**Send bb instructions as the Antigravity system prompt** is on by default. New sessions then run through a small ACP proxy built into the plugin: it removes the `<system_instructions>` block BB places at the top of a thread's first message, gives it to Antigravity as its system prompt, and re-applies it whenever the thread is reopened. The proxy keeps one small file per session under the plugin's data directory. Turn it off to connect BB to `agy acp` directly.
-
 **Show command descriptions** is on by default. When enabled, command execution cards display Antigravity's `toolSummary` as the title with the raw command line as the subtitle, along with an **Outside of sandbox** badge whenever `BypassSandbox` is requested.
 
 The plugin stores these boolean preferences. BB and the CLI can retain their normal conversations and diagnostics. Prompts, workspace context, and tool results are processed by Antigravity and its service. Disabling CLI telemetry does not disable service processing or conversation storage. Read [SECURITY.md](SECURITY.md) for the trust and privacy details.
@@ -180,6 +178,7 @@ Automatic CLI installation, forking from an earlier message, and native thread a
 | ACP is unavailable | Update the CLI and confirm `agy acp --help` works. |
 | Model list is empty | Check CLI sign-in, connectivity, and account eligibility, then refresh providers. |
 | Commands run without asking | Check BB's permission selection and the CLI's own permission rules. Full access auto-approves ACP requests. |
+| A session misbehaves only in BB (lost instructions, failed forks) | New sessions run through a small ACP proxy built into the plugin; it gives BB's instructions to Antigravity as its system prompt, re-applies them when a thread is reopened, and implements forking. To rule it out, run `printf 0 \| bb machine env set BB_AGY_ACP_PROXY` and start a new thread; BB then talks to `agy acp` directly, without forking. `bb machine env unset BB_AGY_ACP_PROXY` restores it. |
 
 When reporting an issue, include BB/CLI versions and a short reproduction. Remove tokens, account details, private paths, and conversation content from logs.
 

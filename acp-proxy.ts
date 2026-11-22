@@ -25,6 +25,8 @@
  *   prompt and anything after it (cancel, config changes) keep their order.
  * - Instructions are persisted per agy session id so they survive bridge and bb restarts.
  * - Every failure falls back to the bridge's own behaviour (the original prompt).
+ * - Always on; `BB_AGY_ACP_PROXY=0` (e.g. via `bb machine env`) is the troubleshooting off switch.
+ *   cli.ts then skips the proxy, and a proxy started anyway only relays lines unchanged.
  *
  * Gotchas:
  * - Verified against agy 1.5.14: a live session/resume keeps model, thought_level and mode.
@@ -41,6 +43,8 @@ import { forkAgyConversation, resolveAgyAppDataDir, type SqliteDatabaseClass } f
 
 export const AGY_ACP_PROXY_FLAG = "--agy-acp-proxy";
 export const AGY_ACP_PROXY_STATE_DIR_ENV = "BB_AGY_ACP_PROXY_STATE_DIR";
+/** Troubleshooting switch: `0` connects bb to `agy acp` without the proxy's changes. */
+export const AGY_ACP_PROXY_SWITCH_ENV = "BB_AGY_ACP_PROXY";
 
 const INSTRUCTIONS_OPEN = "<system_instructions>";
 const INSTRUCTIONS_CLOSE = "</system_instructions>";
@@ -335,8 +339,9 @@ export async function runAgyAcpProxy(argv: string[]): Promise<void> {
     log("missing agy command");
     process.exit(64);
   }
-  const Database = await loadSqlite();
-  if (!Database) log("node:sqlite is unavailable in this Node.js; session/fork is not offered");
+  const disabled = process.env[AGY_ACP_PROXY_SWITCH_ENV] === "0";
+  const Database = disabled ? undefined : await loadSqlite();
+  if (!Database && !disabled) log("node:sqlite is unavailable in this Node.js; session/fork is not offered");
   const appDataDir = resolveAgyAppDataDir(args);
   const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: process.env, shell: false });
   // Hold agy's stderr until it answers (or briefly), so an outdated-CLI explanation can lead the error bb shows.
@@ -350,9 +355,11 @@ export async function runAgyAcpProxy(argv: string[]): Promise<void> {
   const holdTimer = setTimeout(releaseStderr, STDERR_HOLD_MS);
   holdTimer.unref();
   child.stderr.on("data", (chunk: Buffer) => (held ? held.push(chunk) : process.stderr.write(chunk)));
-  const proxy = new AgyAcpProxy({
-    toAgent: line => { child.stdin.write(`${line}\n`); },
-    toClient: line => { process.stdout.write(`${line}\n`); },
+  const toAgent = (line: string) => { child.stdin.write(`${line}\n`); };
+  const toClient = (line: string) => { process.stdout.write(`${line}\n`); };
+  const proxy = disabled ? { fromClient: toAgent, fromAgent: toClient } : new AgyAcpProxy({
+    toAgent,
+    toClient,
     store: createInstructionStore(process.env[AGY_ACP_PROXY_STATE_DIR_ENV] || undefined, log),
     ...(Database ? { fork: (sourceId: string) => forkAgyConversation(appDataDir, sourceId, Database, undefined, log) } : {}),
     log,

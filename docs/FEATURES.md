@@ -9,14 +9,14 @@ Verified against Antigravity CLI 1.5.1 and BB SDK 0.6.109 on Windows. A terminal
 | Subagent delegation control | Optional `subagentsDisabled` setting instructs agents to delegate via BB (`bb thread spawn --parent-self`) and blocks native subagent tool approvals |
 | Command & tool presentation | Displays `toolSummary` descriptions (`commandDescriptionsEnabled`), clean command output and exit codes, destructive **Outside of sandbox** badges (`BypassSandbox`), and native delegation cards |
 | Model and reasoning choices | Discovered from CLI; account dependent |
-| BB instructions | Sent as Antigravity's native system prompt (`_meta.antigravity.systemPrompt.append`) by the plugin's ACP proxy, and re-applied when a session is loaded or resumed (`acpProxy` setting, on by default) |
+| BB instructions | Sent as Antigravity's native system prompt (`_meta.antigravity.systemPrompt.append`) by the plugin's ACP proxy, and re-applied when a session is loaded or resumed |
 | Plan/Build | One Mode selector, mapped to native Plan/Accept edits; duplicate Plan action removed |
 | Accept edits / Full access | Shared bridge permission policy |
 | CLI terminal sandbox | Inherits settings; optional request-sandbox flag for new threads |
 | Native skills in BB picker | Declared workspace and personal skill directories |
 | Separate child sessions | Distinct ACP session IDs verified; actual concurrent agent work not tested |
 | Existing session load | Native session/load verified; full BB restart recovery not tested |
-| Session fork | Fork at the latest message: the plugin's ACP proxy advertises session/fork, copies the CLI conversation (database with its ids swapped, `brain/` folder, title) and opens the copy. Needs the `acpProxy` setting and Node.js with `node:sqlite` |
+| Session fork | Fork at the latest message: the plugin's ACP proxy advertises session/fork, copies the CLI conversation (database with its ids swapped, `brain/` folder, title) and opens the copy. Needs Node.js with `node:sqlite` |
 | Session rewind / fork at an earlier message | Not supported: BB's ACP bridge forks only at the tip, and the CLI does not expose `/rewind` over ACP |
 | Manual compaction | Supported: BB's Compact action sends `/compact`, which `agy acp` runs as its native compaction command (verified on CLI 1.5.14 by inspecting the compacted conversation; CLI 1.5.1 answered it as conversational text) |
 | Subscription quota/usage | Supported via `agy -p "/usage" --output-format json` and `provider-usage.v1` |

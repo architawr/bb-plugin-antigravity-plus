@@ -135,7 +135,7 @@ test('persists instructions per session and refuses unsafe session ids as file n
   }
 });
 
-test('session launches go through the proxy; provider requests and opted-out threads do not', () => {
+test('session launches go through the proxy; provider requests and BB_AGY_ACP_PROXY=0 do not', () => {
   const proxy = { hostFile: '/plugin/host.mjs', stateDir: '/data/acp-proxy/instructions' };
   const spec = () => ({ displayName: 'Antigravity CLI', command: 'agy', args: ['acp', '--disable-telemetry'], env: {} });
   const start = { method: 'thread/start', params: { options: { providerOptions: { acpLaunchSpec: spec() } } } };
@@ -151,7 +151,8 @@ test('session launches go through the proxy; provider requests and opted-out thr
 
   for (const request of [
     { method: 'provider/usage', params: { providerOptions: { acpLaunchSpec: spec() } } },
-    { method: 'thread/start', params: { options: { providerOptions: { agyAcpProxy: false, acpLaunchSpec: spec() } } } },
+    { method: 'thread/start', params: { options: { envVars: { BB_AGY_ACP_PROXY: '0' }, providerOptions: { acpLaunchSpec: spec() } } } },
+    { method: 'thread/start', params: { options: { providerOptions: { acpLaunchSpec: { ...spec(), env: { BB_AGY_ACP_PROXY: '0' } } } } } },
   ]) {
     resolveAntigravityLaunchSpec(request, proxy);
     const options = request.params.providerOptions ?? request.params.options.providerOptions;
@@ -267,4 +268,31 @@ test('reports fork failures to bb as errors', () => {
   const noFork = harness();
   noFork.proxy.fromClient(line({ id: 9, method: 'session/fork', params: { sessionId: 'src' } }));
   assert.equal(noFork.toAgent[0].method, 'session/fork', 'without a forker the request reaches agy unchanged');
+});
+
+test('with BB_AGY_ACP_PROXY=0 a started proxy relays lines unchanged and offers no fork', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agy-proxy-off-'));
+  const record = join(dir, 'received.jsonl');
+  const host = fileURLToPath(new URL('../host.ts', import.meta.url));
+  const agent = fileURLToPath(new URL('./fake-acp-recorder.mjs', import.meta.url));
+  const child = spawn(process.execPath, [host, AGY_ACP_PROXY_FLAG, process.execPath, agent], {
+    env: { ...process.env, RECORD_FILE: record, BB_AGY_ACP_PROXY: '0' },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  try {
+    const replies = new Map();
+    createInterface({ input: child.stdout }).on('line', l => { const m = JSON.parse(l); replies.get(m.id)?.(m); });
+    const call = (id, method, params) => new Promise(resolve => { replies.set(id, resolve); child.stdin.write(line({ id, method, params }) + '\n'); });
+    const init = await call(1, 'initialize', { protocolVersion: 1 });
+    assert.equal(init.result.agentCapabilities.sessionCapabilities, undefined);
+    await call(2, 'session/new', { cwd: dir, mcpServers: [] });
+    const prompt = [{ type: 'text', text: BLOCK }, { type: 'text', text: 'hi' }];
+    await call(3, 'session/prompt', { sessionId: 'rec-session', prompt });
+    const received = readFileSync(record, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.deepEqual(received.map(m => m.method), ['initialize', 'session/new', 'session/prompt']);
+    assert.deepEqual(received[2].params.prompt, prompt);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
