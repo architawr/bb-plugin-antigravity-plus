@@ -15,7 +15,7 @@
 
 An experimental community provider that connects [BB](https://getbb.app) to the [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli). Keep your existing CLI sign-in, choose available models, and work with streamed responses and tool approvals inside BB.
 
-**Status:** available in the BB Community marketplace and tested on Windows. macOS and Linux still need validation.
+**Status:** available in the BB Community marketplace and tested on Windows and Linux. macOS still needs validation.
 
 ## What you get
 

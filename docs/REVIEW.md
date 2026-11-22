@@ -10,4 +10,4 @@ Reviewed the provider declaration, host entry, tests, smoke script, manifest, lo
 
 Verified on Windows: TypeScript check, launch-policy regression test, BB build and plugin reload, live model/mode discovery, and native ACP initialize/session/new/prompt against the installed signed-in CLI. The prompt returned the requested marker without tool access.
 
-Public source metadata, Git-source installation, and the BB Community marketplace listing (`antigravity-cli`) are published. Validation outside Windows (macOS and Linux) remains open.
+Public source metadata, Git-source installation, and the BB Community marketplace listing (`antigravity-cli`) are published. Linux is validated (agy 1.5.14); macOS validation remains open.

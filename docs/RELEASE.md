@@ -62,7 +62,7 @@ Marketplace CI and a maintainer review the source and behavior. Merging publishe
 
 ## Current release status
 
-The [public GitHub repository](https://github.com/ols-md/bb-plugin-antigravity) and BB Community marketplace listing (`antigravity-cli`, tracking `^0.1.0`) are live and verified on Windows. macOS and Linux validation remains open.
+The [public GitHub repository](https://github.com/ols-md/bb-plugin-antigravity) and BB Community marketplace listing (`antigravity-cli`, tracking `^0.1.0`) are live and verified on Windows and Linux. macOS validation remains open.
 
 ## Privacy gate
 
