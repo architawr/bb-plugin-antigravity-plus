@@ -40,3 +40,56 @@ test('explicit executable paths are preserved', () => {
   resolveAntigravityLaunchSpec(request);
   assert.equal(request.params.providerOptions.acpLaunchSpec.command, process.execPath);
 });
+
+test('profile directory env vars append --gemini-dir and --app-data-dir to acp launch args', () => {
+  for (const nested of [false, true]) {
+    const spec = { command: process.execPath, args: ['acp', '--disable-telemetry'], env: {} };
+    const envVars = {
+      BB_ANTIGRAVITY_GEMINI_DIR: '/var/lib/bb/agy-profiles/acct-1/.gemini',
+      BB_ANTIGRAVITY_APP_DATA_DIR: 'antigravity-cli',
+    };
+    const request = {
+      params: nested
+        ? { options: { providerOptions: { acpLaunchSpec: spec }, envVars } }
+        : { providerOptions: { acpLaunchSpec: spec }, envVars },
+    };
+    resolveAntigravityLaunchSpec(request);
+    assert.deepEqual(spec.args, [
+      'acp',
+      '--disable-telemetry',
+      '--gemini-dir',
+      '/var/lib/bb/agy-profiles/acct-1/.gemini',
+      '--app-data-dir',
+      'antigravity-cli',
+    ]);
+  }
+});
+
+test('empty env overrides neutralize inherited profile directory env vars without duplicating explicit flags', () => {
+  const original = process.env.BB_ANTIGRAVITY_GEMINI_DIR;
+  process.env.BB_ANTIGRAVITY_GEMINI_DIR = '/inherited/.gemini';
+  try {
+    const neutralized = { command: process.execPath, args: ['acp'], env: {} };
+    resolveAntigravityLaunchSpec({
+      params: {
+        options: {
+          providerOptions: { acpLaunchSpec: neutralized },
+          envVars: { BB_ANTIGRAVITY_GEMINI_DIR: '' },
+        },
+      },
+    });
+    assert.deepEqual(neutralized.args, ['acp']);
+
+    const explicit = { command: process.execPath, args: ['acp', '--gemini-dir', '/explicit/.gemini'], env: {} };
+    resolveAntigravityLaunchSpec({
+      params: {
+        providerOptions: { acpLaunchSpec: explicit },
+        envVars: { BB_ANTIGRAVITY_GEMINI_DIR: '/override/.gemini' },
+      },
+    });
+    assert.deepEqual(explicit.args, ['acp', '--gemini-dir', '/explicit/.gemini']);
+  } finally {
+    if (original === undefined) delete process.env.BB_ANTIGRAVITY_GEMINI_DIR;
+    else process.env.BB_ANTIGRAVITY_GEMINI_DIR = original;
+  }
+});
