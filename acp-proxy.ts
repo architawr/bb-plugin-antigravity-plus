@@ -35,13 +35,14 @@
  *
  * Gotchas:
  * - Verified against agy 1.5.14: a live session/resume keeps model, thought_level and mode.
- * - The instruction store grows by one small file per Antigravity thread; nothing prunes it.
+ * - The instruction store keeps one small file per agy conversation; each proxy start prunes files
+ *   whose conversation no longer exists (and that are over a day old), so reopened threads keep theirs.
  * - The proxy never reads stdin until `run` is called, so importing this module starts nothing.
  * - agy's stderr is held until agy first answers (at most 5 s), so when a pre-1.5.0 CLI fails
  *   (it has no `acp` subcommand) the proxy's "run agy update" explanation leads the error bb shows.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { forkAgyConversation, resolveAgyAppDataDir, type SqliteDatabaseClass } from "./agy-fork.ts";
@@ -98,6 +99,32 @@ export function createInstructionStore(dir: string | undefined, log: (message: s
       }
     },
   };
+}
+
+/**
+ * Deletes stored instructions whose agy conversation is gone. Files younger than `minAgeMs` are
+ * kept, so a session whose database is still being created is never touched. Best effort.
+ */
+export function pruneInstructionStore(dir: string, conversationsDir: string, now = Date.now(), minAgeMs = 24 * 60 * 60 * 1000): string[] {
+  const removed: string[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  for (const name of names) {
+    const sessionId = name.endsWith(".json") ? name.slice(0, -5) : undefined;
+    if (!sessionId || !SESSION_ID_PATTERN.test(sessionId)) continue;
+    const file = join(dir, name);
+    try {
+      if (now - statSync(file).mtimeMs < minAgeMs) continue;
+      if (existsSync(join(conversationsDir, `${sessionId}.db`))) continue;
+      rmSync(file, { force: true });
+      removed.push(sessionId);
+    } catch {}
+  }
+  return removed;
 }
 
 /** Returns the instructions inside a bridge `<system_instructions>` block, or undefined. */
@@ -388,6 +415,8 @@ export async function runAgyAcpProxy(argv: string[]): Promise<void> {
   const Database = disabled ? undefined : await loadSqlite();
   if (!Database && !disabled) log("node:sqlite is unavailable in this Node.js; session/fork is not offered");
   const appDataDir = resolveAgyAppDataDir(args);
+  const stateDir = process.env[AGY_ACP_PROXY_STATE_DIR_ENV] || undefined;
+  if (stateDir && !disabled) setImmediate(() => pruneInstructionStore(stateDir, join(appDataDir, "conversations")));
   const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: process.env, shell: false });
   // Hold agy's stderr until it answers (or briefly), so an outdated-CLI explanation can lead the error bb shows.
   let answered = false;
@@ -405,7 +434,7 @@ export async function runAgyAcpProxy(argv: string[]): Promise<void> {
   const proxy = disabled ? { fromClient: toAgent, fromAgent: toClient } : new AgyAcpProxy({
     toAgent,
     toClient,
-    store: createInstructionStore(process.env[AGY_ACP_PROXY_STATE_DIR_ENV] || undefined, log),
+    store: createInstructionStore(stateDir, log),
     ...(Database ? { fork: (sourceId: string) => forkAgyConversation(appDataDir, sourceId, Database, undefined, log) } : {}),
     log,
   });

@@ -341,3 +341,26 @@ test('reports a chat reply to /compact as a failed compaction, and leaves real c
   ordinary.proxy.fromAgent(line({ id: 7, result: { stopReason: 'end_turn' } }));
   assert.equal(ordinary.toClient.some(m => m.params?.update?.sessionUpdate === 'compaction_update'), false);
 });
+
+test('prunes stored instructions only for old files whose conversation is gone', async () => {
+  const { pruneInstructionStore } = await import('../acp-proxy.ts');
+  const { mkdirSync, utimesSync, writeFileSync } = await import('node:fs');
+  const root = mkdtempSync(join(tmpdir(), 'agy-proxy-prune-'));
+  const store = join(root, 'store');
+  const conversations = join(root, 'conversations');
+  mkdirSync(store);
+  mkdirSync(conversations);
+  try {
+    const old = Date.now() / 1000 - 3 * 24 * 3600;
+    for (const id of ['gone-old', 'kept-old', 'gone-new']) writeFileSync(join(store, `${id}.json`), '{}');
+    writeFileSync(join(store, 'notes.txt'), 'x');
+    utimesSync(join(store, 'gone-old.json'), old, old);
+    utimesSync(join(store, 'kept-old.json'), old, old);
+    writeFileSync(join(conversations, 'kept-old.db'), '');
+    assert.deepEqual(pruneInstructionStore(store, conversations), ['gone-old']);
+    assert.deepEqual(readdirSync(store).sort(), ['gone-new.json', 'kept-old.json', 'notes.txt']);
+    assert.deepEqual(pruneInstructionStore(join(root, 'missing'), conversations), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
