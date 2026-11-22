@@ -1,6 +1,6 @@
 ---
 name: antigravity-cli
-description: Spawn, configure, or troubleshoot Antigravity CLI (antigravity-cli) threads in BB — models, reasoning levels (low, medium, high), quota/usage windows, Build/Plan work modes, permissions, and sign-in.
+description: Spawn, configure, or troubleshoot Antigravity CLI (antigravity-cli) threads in BB — models, reasoning levels (low, medium, high, xhigh, max), quota/usage windows, Build/Plan work modes, permissions, and sign-in.
 ---
 
 # Antigravity CLI provider
@@ -9,7 +9,7 @@ Threads on the `antigravity-cli` provider run the locally installed Antigravity 
 
 ## Models and reasoning levels
 
-`antigravity-cli` discovers models and per-model reasoning efforts from the signed-in CLI (`low`, `medium`, `high`; default `medium`). Fixed-effort models (such as `gpt-oss-120b-medium`) report `supportedReasoningEfforts: []`.
+`antigravity-cli` discovers models and per-model reasoning efforts from the signed-in CLI (`low`, `medium`, `high`, `xhigh`, `max`, depending on the model). Fixed-effort models (such as `gpt-oss-120b-medium`) report `supportedReasoningEfforts: []`.
 
 - Plain `bb provider models antigravity-cli` prints only the model table and `sessionOptions` (`mode`), omitting reasoning levels. Always pass `--json` when inspecting reasoning support:
 
