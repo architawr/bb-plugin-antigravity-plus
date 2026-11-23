@@ -1,1 +1,14 @@
-{"compilerOptions":{"types":["node"],"target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true,"strict":true,"noEmit":true,"skipLibCheck":true},"include":["*.ts"]}
+{
+  "compilerOptions": {
+    "types": ["node"],
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts", "*.tsx"]
+}

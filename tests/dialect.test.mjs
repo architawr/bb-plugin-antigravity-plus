@@ -954,3 +954,57 @@ test('applyThreadCommandDescriptions isolates commandDescriptionsEnabled per thr
   const otherMessage = JSON.stringify({ method: 'session/update' });
   assert.equal(applyThreadCommandDescriptions(otherMessage, enabledByThread), otherMessage);
 });
+
+test('classifyToolCall formats Antigravity swarm tools cleanly', () => {
+  const titleCard = classifyToolCall({
+    toolCallId: 'swarm_1',
+    sessionUpdate: 'tool_call',
+    title: 'swarm',
+    rawInput: { action: 'title', title: 'Audit plugin build' },
+  });
+  assert.equal(titleCard.kind, 'tool_use');
+  assert.equal(titleCard.presentation.label.completed, 'Named swarm');
+  assert.equal(titleCard.presentation.title, 'Audit plugin build');
+
+  const addCard = classifyToolCall({
+    toolCallId: 'swarm_2',
+    sessionUpdate: 'tool_call',
+    title: 'swarm',
+    rawInput: {
+      action: 'add',
+      name: 'worker-a',
+      workspace: 'share',
+      brief: 'Inspect package.json and report the version.',
+    },
+  });
+  assert.equal(addCard.presentation.label.completed, 'Added swarm worker');
+  assert.equal(addCard.presentation.title, 'worker-a');
+  assert.match(addCard.presentation.subtitle, /share/);
+
+  const postCard = classifyToolCall({
+    toolCallId: 'swarm_3',
+    sessionUpdate: 'tool_call',
+    title: 'post_message',
+    rawInput: { text: '@coordinator [done] Verified package.json' },
+  });
+  assert.equal(postCard.presentation.label.completed, 'Posted to swarm board');
+  assert.equal(postCard.presentation.title, '@coordinator [done] Verified package.json');
+
+  const readCard = classifyToolCall({
+    toolCallId: 'swarm_4',
+    sessionUpdate: 'tool_call',
+    title: 'read_board',
+    rawInput: { since_seq: 3 },
+  });
+  assert.equal(readCard.presentation.label.completed, 'Read swarm board');
+  assert.equal(readCard.presentation.title, 'Read swarm board (since #3)');
+
+  const waitCard = classifyToolCall({
+    toolCallId: 'swarm_5',
+    sessionUpdate: 'tool_call',
+    title: 'swarm_wait',
+    rawInput: {},
+  });
+  assert.equal(waitCard.presentation.label.completed, 'Resumed from swarm board');
+  assert.equal(waitCard.presentation.title, 'Wait for swarm updates');
+});

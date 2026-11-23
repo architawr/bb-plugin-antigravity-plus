@@ -1,10 +1,13 @@
 import { experimental_acpLaunchSpecSchema, experimental_acpProviderBridge } from "@get-bb/plugin-sdk/provider-bridge/acp";
+import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { threadStartParamsSchema, threadResumeParamsSchema, turnStartParamsSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { createBackgroundTaskTracker, defaultBackgroundTaskStatePath } from "./background-tasks.ts";
 import { ANTIGRAVITY_ACP_DIALECT_ID, applyThreadCommandDescriptions, onToolUpdate, registerAntigravityAcpDialect } from "./dialect.ts";
 import { modeControlOutput } from "./mode-controls.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
 import { interceptSubagentApproval, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
+import { readSwarmBoard } from "./swarm-board.ts";
+import { swarmHostContract } from "./swarm-contract.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
 import { planAntigravityInstallationRun, readAntigravityHealth, readAntigravityInstallationStatus } from "./maintenance.ts";
 import { resolveAntigravityLaunchSpec } from "./cli.ts";
@@ -287,5 +290,12 @@ export const experimental_providerBridge = {
   },
 };
 
-// bb imports this module as the provider bridge; agy sessions start it again as the ACP proxy.
+export default experimental_defineHostEntry({
+  contract: swarmHostContract,
+  handlers: {
+    readSwarmBoard: ({ providerThreadId }) => readSwarmBoard(providerThreadId),
+  },
+});
+
+// bb imports this module as the provider bridge and host RPC entry; agy sessions start it again as the ACP proxy.
 if (process.argv[2] === AGY_ACP_PROXY_FLAG) void runAgyAcpProxy(process.argv.slice(3));

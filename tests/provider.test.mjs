@@ -14,6 +14,7 @@ test('registers a native ACP provider without changing credentials or bypassing 
         assert.equal(descriptors.processPerSession.default, true);
         assert.equal(descriptors.subagentsDisabled.default, false);
         assert.equal(descriptors.commandDescriptionsEnabled.default, true);
+        assert.equal(descriptors.autoOpenSwarmBoard.default, true);
         assert.equal(descriptors.acpProxy, undefined);
         assert.equal(descriptors.enabled.default, true);
         return { get: async () => ({ enabled: true }), onChange() {} };
@@ -90,4 +91,11 @@ test('sandbox and processPerSession only change fixed CLI arguments', async () =
   ));
   assert.equal(provider.capabilities.fork, 'tip');
   assert.equal(provider.capabilities.supportsManualCompaction, true);
+  assert.equal(provider.models.scope, 'host');
+  assert.equal(typeof provider.strings.planModeCopy, 'string');
+  assert.deepEqual(provider.env.passthrough, [
+    'BB_ANTIGRAVITY_GEMINI_DIR',
+    'BB_ANTIGRAVITY_APP_DATA_DIR',
+    'BB_AGY_ACP_PROXY',
+  ]);
 });

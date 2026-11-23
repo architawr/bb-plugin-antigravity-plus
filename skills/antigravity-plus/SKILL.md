@@ -47,6 +47,7 @@ Work mode and permissions are separate controls:
   - `promptOnSandboxEscape` (default `true`): when `autoApprove` is enabled in Accept edits mode, still surface commands requesting execution outside the CLI sandbox for confirmation.
   - `subagentsDisabled` (default `false`): prevent Antigravity CLI from using its native subagent tools so agents delegate subtasks via BB child threads (`bb thread spawn --parent-self`).
   - `commandDescriptionsEnabled` (default `true`): show Antigravity's `toolSummary` description on command execution cards.
+  - `autoOpenSwarmBoard` (default `true`): open the Swarm tab in the thread side panel automatically when an Antigravity swarm starts.
 
 ## Capabilities and limits
 
@@ -54,5 +55,6 @@ Work mode and permissions are separate controls:
 - **Tip forking (`fork: "tip"`):** Forks at the latest message through the ACP proxy (or natively if a future `agy` release advertises `sessionCapabilities.fork`). Mid-thread rewind is not supported.
 - **Manual compaction:** Runs the CLI's native `/compact` (verified on `agy` 1.5.14+) and reports a failed compaction if the CLI passes `/compact` to the model instead.
 - **Profile isolation:** `BB_ANTIGRAVITY_GEMINI_DIR` and `BB_ANTIGRAVITY_APP_DATA_DIR` forward as `--gemini-dir` and `--app-data-dir`.
-- **Native skills:** Indexed from workspace `.agents/skills` and `.agent/skills`, and from user `~/.gemini/antigravity-cli/skills`, `~/.gemini/antigravity-cli/builtin/skills`, `~/.gemini/skills`, and `~/.gemini/config/skills`.
+- **Native skills:** Indexed from workspace `.agents/skills` (ancestors) and `.agent/skills`, and from user `~/.gemini/antigravity-cli/skills`, `~/.gemini/antigravity-cli/builtin/skills` (prefixed `antigravity:`), `~/.gemini/skills`, and `~/.gemini/config/skills`.
+- **Native Swarm tab:** Threads running `/swarm` automatically expose a fixed **Swarm** tab in BB's right side panel showing the live roster, optional `plan.json` overview, and board messages, alongside clean timeline cards for `swarm`, `post_message`, `read_board`, and `swarm_wait`.
 - **Usage limits:** Exposed via `provider/usage` and BB's `provider-usage.v1` RPC source (`bb settings usage --refresh --json`).

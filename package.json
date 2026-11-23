@@ -4,10 +4,11 @@
   "type": "module",
   "license": "MIT",
   "author": "tymshe",
-  "description": "First-class Antigravity CLI ACP provider for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, and macOS/Linux/Windows support.",
+  "description": "First-class Antigravity CLI ACP provider for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, Swarm board tab, and macOS/Linux/Windows support.",
   "files": [
     "server.ts",
     "host.ts",
+    "app.tsx",
     "cli.ts",
     "background-tasks.ts",
     "subagents.ts",
@@ -16,6 +17,8 @@
     "mode-controls.ts",
     "usage.ts",
     "maintenance.ts",
+    "swarm-contract.ts",
+    "swarm-board.ts",
     "acp-proxy.ts",
     "agy-fork.ts",
     "dist/*.js",
@@ -37,12 +40,13 @@
   },
   "bb": {
     "name": "Antigravity Plus",
-    "description": "Antigravity CLI for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, per-session isolation, and macOS support.",
+    "description": "Antigravity CLI for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, native Swarm board panel, per-session isolation, and macOS support.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
     "server": "./server.ts",
     "host": "./host.ts",
+    "app": "./app.tsx",
     "skills": [
       "skills"
     ]
@@ -54,11 +58,14 @@
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@get-bb/plugin-sdk": "0.6.157"
+    "@get-bb/plugin-sdk": "0.6.157",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^7.0.2"
   },
   "repository": {
     "type": "git",

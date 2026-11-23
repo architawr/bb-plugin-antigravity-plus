@@ -101,6 +101,11 @@ export const CANONICAL_ANTIGRAVITY_TOOLS: ReadonlySet<string> = new Set([
   "define_subagent",
   "manage_subagents",
   "send_message",
+  // Swarm
+  "swarm",
+  "post_message",
+  "read_board",
+  "swarm_wait",
   // Background tasks & scheduling
   "manage_task",
   "schedule",
@@ -987,6 +992,195 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         item: {
           type: "tool",
           tool: "ask_question",
+          args: event.rawInput,
+        },
+      };
+    }
+
+    case "swarm": {
+      const action =
+        typeof rawInput.action === "string" && rawInput.action.trim()
+          ? rawInput.action.trim().toLowerCase()
+          : undefined;
+      const name =
+        typeof rawInput.name === "string" && rawInput.name.trim() ? rawInput.name.trim() : undefined;
+      const titleText =
+        typeof rawInput.title === "string" && rawInput.title.trim() ? rawInput.title.trim() : undefined;
+      const model =
+        typeof rawInput.model === "string" && rawInput.model.trim() ? rawInput.model.trim() : undefined;
+      const workspace =
+        typeof rawInput.workspace === "string" && rawInput.workspace.trim()
+          ? rawInput.workspace.trim()
+          : undefined;
+      const brief =
+        typeof rawInput.brief === "string" && rawInput.brief.trim() ? rawInput.brief.trim() : undefined;
+      const count = typeof rawInput.n === "number" && Number.isFinite(rawInput.n) ? rawInput.n : undefined;
+      const tasksCount = Array.isArray(rawInput.tasks) ? rawInput.tasks.length : undefined;
+
+      let pending = "Updating swarm";
+      let completed = "Updated swarm";
+      let cardTitle = "Swarm";
+      let detailParts: string | undefined;
+      let glyph = "Users";
+
+      if (action === "title") {
+        pending = "Naming swarm";
+        completed = "Named swarm";
+        cardTitle = titleText ?? "Name swarm";
+      } else if (action === "add") {
+        pending = "Adding swarm worker";
+        completed = "Added swarm worker";
+        glyph = "Bot";
+        const shardCount = tasksCount ?? (count && count > 1 ? count : undefined);
+        cardTitle = name
+          ? shardCount
+            ? `${name} (${shardCount} workers)`
+            : name
+          : "Add swarm worker";
+        const meta: string[] = [];
+        if (model) meta.push(model);
+        if (workspace && workspace !== "inherit") meta.push(workspace);
+        if (brief) meta.push(brief.slice(0, 140));
+        if (meta.length > 0) detailParts = meta.join(" · ");
+      } else if (action === "kill") {
+        pending = "Stopping swarm worker";
+        completed = "Stopped swarm worker";
+        glyph = "Bot";
+        cardTitle = name ? `Stop ${name}` : "Stop swarm worker";
+      } else if (action === "status") {
+        pending = "Checking swarm status";
+        completed = "Checked swarm status";
+        cardTitle = "Swarm status";
+      } else if (action === "models") {
+        pending = "Listing swarm models";
+        completed = "Listed swarm models";
+        cardTitle = "Swarm models";
+      } else if (action === "model") {
+        pending = "Switching swarm model";
+        completed = "Switched swarm model";
+        glyph = "Bot";
+        cardTitle = name && model ? `${name} -> ${model}` : model ? `Switch model to ${model}` : "Switch swarm model";
+      } else if (action) {
+        cardTitle = `Swarm ${action}`;
+      }
+
+      const presentation: DialectPresentation = {
+        label: { pending, completed },
+        icon: { glyph },
+        title: cardTitle,
+        ...(detailParts
+          ? {
+              detail: truncatePresentationDetail(detailParts),
+              subtitle: detailParts,
+            }
+          : {}),
+      };
+
+      return {
+        kind: "tool_use",
+        tool: "swarm",
+        detail: detailParts ?? cardTitle,
+        presentation,
+        item: {
+          type: "tool",
+          tool: "swarm",
+          args: event.rawInput,
+        },
+      };
+    }
+
+    case "post_message": {
+      const text =
+        typeof rawInput.text === "string" && rawInput.text.trim()
+          ? rawInput.text.trim()
+          : typeof rawInput.message === "string" && rawInput.message.trim()
+            ? rawInput.message.trim()
+            : undefined;
+      const channel =
+        typeof rawInput.channel === "string" && rawInput.channel.trim()
+          ? rawInput.channel.trim()
+          : undefined;
+      const firstLine = text ? text.split(/\r?\n/, 1)[0].trim() : undefined;
+      const cardTitle = firstLine
+        ? firstLine.length > 88
+          ? `${firstLine.slice(0, 85)}...`
+          : firstLine
+        : channel
+          ? `Post to #${channel}`
+          : "Post to swarm board";
+
+      const presentation: DialectPresentation = {
+        label: { pending: "Posting to swarm board", completed: "Posted to swarm board" },
+        icon: { glyph: "MessageSquare" },
+        title: cardTitle,
+        ...(text && text !== firstLine
+          ? {
+              detail: truncatePresentationDetail(text),
+              subtitle: text.slice(0, 140),
+            }
+          : {}),
+      };
+
+      return {
+        kind: "tool_use",
+        tool: "post_message",
+        detail: text ? truncatePresentationDetail(text) : channel ?? null,
+        presentation,
+        item: {
+          type: "tool",
+          tool: "post_message",
+          args: event.rawInput,
+        },
+      };
+    }
+
+    case "read_board": {
+      const sinceSeq =
+        typeof rawInput.since_seq === "number" && Number.isInteger(rawInput.since_seq)
+          ? rawInput.since_seq
+          : undefined;
+      const channel =
+        typeof rawInput.channel === "string" && rawInput.channel.trim()
+          ? rawInput.channel.trim()
+          : undefined;
+      const suffixParts: string[] = [];
+      if (channel) suffixParts.push(`#${channel}`);
+      if (sinceSeq !== undefined) suffixParts.push(`since #${sinceSeq}`);
+      const cardTitle = suffixParts.length > 0 ? `Read swarm board (${suffixParts.join(", ")})` : "Read swarm board";
+
+      const presentation: DialectPresentation = {
+        label: { pending: "Reading swarm board", completed: "Read swarm board" },
+        icon: { glyph: "MessageSquare" },
+        title: cardTitle,
+      };
+
+      return {
+        kind: "tool_use",
+        tool: "read_board",
+        detail: suffixParts.length > 0 ? suffixParts.join(", ") : null,
+        presentation,
+        item: {
+          type: "tool",
+          tool: "read_board",
+          args: event.rawInput,
+        },
+      };
+    }
+
+    case "swarm_wait": {
+      const presentation: DialectPresentation = {
+        label: { pending: "Waiting on swarm board", completed: "Resumed from swarm board" },
+        icon: { glyph: "Clock" },
+        title: "Wait for swarm updates",
+      };
+
+      return {
+        kind: "tool_use",
+        tool: "swarm_wait",
+        presentation,
+        item: {
+          type: "tool",
+          tool: "swarm_wait",
           args: event.rawInput,
         },
       };
