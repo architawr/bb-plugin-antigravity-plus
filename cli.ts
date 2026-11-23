@@ -85,6 +85,10 @@ export function resolveAntigravityLaunchSpec(request: any, proxy?: AgyAcpProxyLa
     if (!isAgy || !proxy || method.startsWith("provider/")) continue;
     spec.args = [proxy.hostFile, AGY_ACP_PROXY_FLAG, spec.command, ...(Array.isArray(spec.args) ? spec.args : [])];
     spec.command = process.execPath;
-    if (proxy.stateDir) spec.env = { ...spec.env, [AGY_ACP_PROXY_STATE_DIR_ENV]: proxy.stateDir };
+    spec.env = {
+      ...spec.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      ...(proxy.stateDir ? { [AGY_ACP_PROXY_STATE_DIR_ENV]: proxy.stateDir } : {}),
+    };
   }
 }
