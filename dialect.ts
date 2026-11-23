@@ -71,7 +71,7 @@ export type AcpDialectToolClassification =
       item?: Record<string, unknown>;
     };
 
-export const ANTIGRAVITY_ACP_DIALECT_ID = "antigravity";
+export const ANTIGRAVITY_ACP_DIALECT_ID = "antigravity-plus";
 
 export const CANONICAL_ANTIGRAVITY_TOOLS: ReadonlySet<string> = new Set([
   // Execution

@@ -48,3 +48,22 @@ test('approval is opt-in, isolated by thread and honors denied escalation', () =
   assert.equal(interceptApproval(request('no-subagents', approval('tool_use', ['allow_once'], 'regular_tool'))), true);
 });
 
+test('promptOnSandboxEscape surfaces sandbox escape prompts even when autoApprove is enabled', () => {
+  start('guarded', true, 'ask', { promptOnSandboxEscape: true });
+  start('unguarded', true, 'ask', { promptOnSandboxEscape: false });
+
+  const escapeByReason = { ...approval('command'), reason: 'Command requested execution outside of sandbox' };
+  const escapeByBadge = {
+    ...approval('command'),
+    subject: { ...approval('command').subject, presentation: { badges: [{ label: 'Outside of sandbox', tone: 'danger' }] } },
+  };
+  const ordinary = approval('command');
+
+  assert.equal(interceptApproval(request('guarded', escapeByReason)), false);
+  assert.equal(interceptApproval(request('guarded', escapeByBadge)), false);
+  assert.equal(interceptApproval(request('guarded', ordinary)), true);
+
+  assert.equal(interceptApproval(request('unguarded', escapeByReason)), true);
+  assert.equal(interceptApproval(request('unguarded', escapeByBadge)), true);
+});
+

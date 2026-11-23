@@ -6,8 +6,8 @@ import { resolveAntigravityCommand } from "./cli.ts";
 
 const USAGE_TIMEOUT_MS = 15_000;
 const USAGE_CACHE_TTL_MS = 60_000;
-const PROVIDER_ID = "antigravity-cli";
-const PLUGIN_ID = "antigravity-cli";
+const PROVIDER_ID = "antigravity-plus";
+const PLUGIN_ID = "antigravity-plus";
 
 const agyBucketSchema = z.object({
   id: z.string().min(1).optional(),

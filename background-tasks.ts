@@ -117,7 +117,7 @@ const DEFAULT_TASK_STATE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
  */
 export function defaultBackgroundTaskStatePath(): string {
   const override = process.env.BB_ANTIGRAVITY_TASK_STATE_DIR?.trim();
-  const dir = override || join(homedir(), '.bb', 'plugin-data', 'bb-plugin-antigravity');
+  const dir = override || join(homedir(), '.bb', 'plugin-data', 'bb-plugin-antigravity-plus');
   return join(dir, 'background-tasks.json');
 }
 

@@ -239,7 +239,7 @@ test('registers discoverable provider-usage.v1 RPC handlers and returns host usa
   let registeredOptions;
 
   const mockBb = {
-    pluginId: 'antigravity-cli',
+    pluginId: 'antigravity-plus',
     rpc: {
       register(contract, handlers, options) {
         registeredContract = contract;
@@ -255,15 +255,15 @@ test('registers discoverable provider-usage.v1 RPC handlers and returns host usa
       providers: {
         list: async () => [
           {
-            id: 'antigravity-cli',
-            pluginId: 'antigravity-cli',
-            displayName: 'Antigravity CLI',
+            id: 'antigravity-plus',
+            pluginId: 'antigravity-plus',
+            displayName: 'Antigravity Plus',
           },
         ],
       },
       system: {
         usageLimits: async () => ({
-          'antigravity-cli': normalizeAntigravityUsageOutput(SAMPLE_USAGE_JSON).usage,
+          'antigravity-plus': normalizeAntigravityUsageOutput(SAMPLE_USAGE_JSON).usage,
         }),
       },
     },
@@ -275,7 +275,7 @@ test('registers discoverable provider-usage.v1 RPC handlers and returns host usa
 
   const listResult = await registeredHandlers['provider-usage.v1.listResources']({});
   assert.equal(listResult.resources.length, 1);
-  assert.equal(listResult.resources[0].providerId, 'antigravity-cli');
+  assert.equal(listResult.resources[0].providerId, 'antigravity-plus');
   assert.equal(listResult.resources[0].scope.kind, 'host');
 
   const getResult = await registeredHandlers['provider-usage.v1.getResource']({
@@ -292,20 +292,20 @@ test('evicts cached usage when the provider is removed', async () => {
   let enabled = true;
   let collections = 0;
   const bb = {
-    pluginId: 'antigravity-cli',
+    pluginId: 'antigravity-plus',
     rpc: { register(_contract, registered) { handlers = registered; } },
     sdk: {
       hosts: { get: async () => ({ id: 'host_1', name: 'Machine', status: 'connected' }) },
-      providers: { list: async () => enabled ? [{ id: 'antigravity-cli', pluginId: 'antigravity-cli' }] : [] },
+      providers: { list: async () => enabled ? [{ id: 'antigravity-plus', pluginId: 'antigravity-plus' }] : [] },
       system: { usageLimits: async () => {
         collections++;
-        return { 'antigravity-cli': normalizeAntigravityUsageOutput(SAMPLE_USAGE_JSON).usage };
+        return { 'antigravity-plus': normalizeAntigravityUsageOutput(SAMPLE_USAGE_JSON).usage };
       } },
     },
   };
   registerAntigravityUsageSource(bb);
   const getResource = handlers['provider-usage.v1.getResource'];
-  const resourceId = JSON.stringify(['host_1', 'antigravity-cli']);
+  const resourceId = JSON.stringify(['host_1', 'antigravity-plus']);
   assert.equal((await getResource({ resourceId, refresh: true })).usage.status, 'ok');
   enabled = false;
   await assert.rejects(getResource({ resourceId, refresh: true }), /no longer exists/);

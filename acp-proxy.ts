@@ -163,6 +163,7 @@ export class AgyAcpProxy {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly newSessionRequests = new Map<unknown, SessionContext>();
   private readonly initializeRequests = new Set<unknown>();
+  private nativeFork = false;
   private readonly compactions = new Map<unknown, { sessionId: string; text: string; modelActed: boolean }>();
   private readonly internal = new Map<string, (response: Json) => void>();
   private readonly queue: string[] = [];
@@ -191,7 +192,7 @@ export class AgyAcpProxy {
           this.newSessionRequests.set(message.id, { cwd: params.cwd, mcpServers: params.mcpServers });
           break;
         case "session/fork":
-          if (this.options.fork) return this.forkSession(message, params);
+          if (this.options.fork && !this.nativeFork) return this.forkSession(message, params);
           break;
         case "session/load":
         case "session/resume":
@@ -235,6 +236,10 @@ export class AgyAcpProxy {
         }
       }
       if (this.initializeRequests.delete(message.id) && message.result) {
+        if (message.result?.agentCapabilities?.sessionCapabilities?.fork !== undefined) {
+          this.nativeFork = true;
+          return this.options.toClient(line);
+        }
         return this.options.toClient(JSON.stringify(advertiseFork(message)));
       }
       const context = this.newSessionRequests.get(message.id);
@@ -355,6 +360,7 @@ function isCompactPrompt(params: Json): boolean {
 export function advertiseFork(response: Json): Json {
   const result = response.result ?? {};
   const capabilities = result.agentCapabilities ?? {};
+  if (capabilities.sessionCapabilities?.fork !== undefined) return response;
   const session = { ...(capabilities.sessionCapabilities ?? {}), fork: {} };
   return { ...response, result: { ...result, agentCapabilities: { ...capabilities, sessionCapabilities: session } } };
 }

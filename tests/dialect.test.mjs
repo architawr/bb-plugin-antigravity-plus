@@ -20,8 +20,8 @@ import {
 } from '../dialect.ts';
 
 test('exports the correct dialect id and registers idempotently', () => {
-  assert.equal(ANTIGRAVITY_ACP_DIALECT_ID, 'antigravity');
-  assert.equal(antigravityAcpDialect.id, 'antigravity');
+  assert.equal(ANTIGRAVITY_ACP_DIALECT_ID, 'antigravity-plus');
+  assert.equal(antigravityAcpDialect.id, 'antigravity-plus');
 
   const registered1 = registerAntigravityAcpDialect();
   assert.equal(registered1, antigravityAcpDialect);

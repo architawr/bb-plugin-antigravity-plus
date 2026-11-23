@@ -3,7 +3,7 @@ import { ANTIGRAVITY_ACP_DIALECT_ID } from "./dialect.ts";
 import { registerAntigravityUsageSource } from "./usage.ts";
 
 const launchSpec = {
-  displayName: "Antigravity CLI",
+  displayName: "Antigravity Plus",
   command: "agy",
   args: ["acp", "--disable-telemetry"],
   env: {},
@@ -15,14 +15,26 @@ export default async function antigravity(bb: BbPluginApi) {
     autoApprove: {
       type: "boolean",
       label: "Automatically approve ACP permission requests",
-      description: "Automatically answer Antigravity permission requests, including commands outside the CLI sandbox. Applies to new turns.",
+      description: "Automatically answer Antigravity permission requests in Accept edits mode. Applies to new turns.",
       default: false,
+    },
+    promptOnSandboxEscape: {
+      type: "boolean",
+      label: "Prompt on sandbox escapes when auto-approving",
+      description: "When automatic approval is enabled in Accept edits mode, still ask for confirmation if a command requests execution outside the CLI sandbox.",
+      default: true,
     },
     sandbox: {
       type: "boolean",
       label: "Request CLI terminal sandbox",
       description: "Add --sandbox for new threads. Otherwise use CLI settings. Requires a supported OS; the CLI may fall back to approval prompts. Full access can approve requests outside the sandbox.",
       default: false,
+    },
+    processPerSession: {
+      type: "boolean",
+      label: "Isolate each thread in its own worker process",
+      description: "Add --process-per-session so each Antigravity thread runs in its own CLI worker process.",
+      default: true,
     },
     subagentsDisabled: {
       type: "boolean",
@@ -38,14 +50,14 @@ export default async function antigravity(bb: BbPluginApi) {
     },
     enabled: {
       type: "boolean",
-      label: "Enable Antigravity CLI",
-      description: "Show Antigravity in the provider picker. Existing running turns are not stopped.",
+      label: "Enable Antigravity Plus",
+      description: "Show Antigravity Plus in the provider picker. Existing running turns are not stopped.",
       default: true,
     },
   });
   const register = () => bb.providers.register({
-    id: "antigravity-cli",
-    displayName: "Antigravity CLI",
+    id: "antigravity-plus",
+    displayName: "Antigravity Plus",
     icon: "./assets/provider.svg",
     family: "antigravity",
     strings: {
@@ -60,21 +72,34 @@ export default async function antigravity(bb: BbPluginApi) {
     deriveProviderOptions({ settings }) {
       return {
         autoApprove: settings.autoApprove === true,
+        promptOnSandboxEscape: settings.promptOnSandboxEscape !== false,
         providerSubagentsEnabled: settings.subagentsDisabled !== true,
         commandDescriptionsEnabled: settings.commandDescriptionsEnabled !== false,
         acpDialect: ANTIGRAVITY_ACP_DIALECT_ID,
         acpLaunchSpec: {
           ...launchSpec,
-          args: [...launchSpec.args, ...(settings.sandbox === true ? ["--sandbox"] : [])],
+          args: [
+            ...launchSpec.args,
+            ...(settings.processPerSession !== false ? ["--process-per-session"] : []),
+            ...(settings.sandbox === true ? ["--sandbox"] : []),
+          ],
         },
       };
     },
     experimental_nativeSkillRoots: {
-      user: [".gemini/antigravity-cli/skills", ".gemini/skills", ".gemini/config/skills"],
-      project: [".agents/skills", ".agent/skills"],
+      user: [
+        ".gemini/antigravity-cli/skills",
+        { path: ".gemini/antigravity-cli/builtin/skills", namePrefix: "antigravity:" },
+        ".gemini/skills",
+        ".gemini/config/skills",
+      ],
+      project: [
+        { path: ".agents/skills", ancestors: true },
+        ".agent/skills",
+      ],
     },
     experimental_visibility: "always",
-    maintenance: { health: true, usage: true, installation: false },
+    maintenance: { health: true, usage: true, installation: true },
     capabilities: {
       supportsServiceTier: false,
       supportsNativeUserQuestion: false,

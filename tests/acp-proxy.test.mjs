@@ -364,3 +364,16 @@ test('prunes stored instructions only for old files whose conversation is gone',
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('passes session/fork through natively when agy itself advertises fork support', () => {
+  let proxyForkCalls = 0;
+  const h = harness({ fork: () => { proxyForkCalls++; return 'proxy-copy'; } });
+  h.proxy.fromClient(line({ id: 1, method: 'initialize', params: { protocolVersion: 1 } }));
+  h.proxy.fromAgent(line({ id: 1, result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { fork: { native: true } } } } }));
+  assert.deepEqual(h.toClient[0].result.agentCapabilities.sessionCapabilities.fork, { native: true });
+
+  h.proxy.fromClient(line({ id: 2, method: 'session/fork', params: { sessionId: 's1', cwd: '/work', mcpServers: [] } }));
+  assert.equal(proxyForkCalls, 0);
+  assert.equal(h.toAgent.at(-1).method, 'session/fork');
+  assert.equal(h.toAgent.at(-1).id, 2);
+});

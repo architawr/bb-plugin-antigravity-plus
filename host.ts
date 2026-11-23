@@ -6,6 +6,7 @@ import { modeControlOutput } from "./mode-controls.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
 import { interceptSubagentApproval, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
+import { planAntigravityInstallationRun, readAntigravityHealth, readAntigravityInstallationStatus } from "./maintenance.ts";
 import { resolveAntigravityLaunchSpec } from "./cli.ts";
 import { AGY_ACP_PROXY_FLAG, runAgyAcpProxy } from "./acp-proxy.ts";
 import { join } from "node:path";
@@ -27,10 +28,25 @@ onToolUpdate(event => {
   backgroundTaskTracker.recordToolEvent(event as any);
 });
 
-function parseUsageRequest(parsed: unknown): { id: string | number; command: string; cwd?: string; env?: Record<string, string> } | null {
+function parseMaintenanceRequest(parsed: unknown): {
+  id: string | number;
+  method: "provider/usage" | "provider/health" | "provider/installation/status" | "provider/installation/run";
+  action?: "install" | "update";
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+} | null {
   if (!parsed || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
-  if (record.method !== "provider/usage") return null;
+  const method = record.method;
+  if (
+    method !== "provider/usage" &&
+    method !== "provider/health" &&
+    method !== "provider/installation/status" &&
+    method !== "provider/installation/run"
+  ) {
+    return null;
+  }
   const id = record.id;
   if (typeof id !== "string" && typeof id !== "number") return null;
   const params = record.params && typeof record.params === "object" ? (record.params as Record<string, unknown>) : undefined;
@@ -39,10 +55,13 @@ function parseUsageRequest(parsed: unknown): { id: string | number; command: str
       ? (params.providerOptions as Record<string, unknown>)
       : undefined;
   const spec = experimental_acpLaunchSpecSchema.safeParse(providerOptions?.acpLaunchSpec);
+  const action = params?.action === "install" || params?.action === "update" ? params.action : undefined;
   return {
     id,
+    method,
+    action,
     command: spec.success ? spec.data.command : "agy",
-    cwd: spec.success ? spec.data.cwd : undefined,
+    cwd: spec.success ? spec.data.cwd : (typeof params?.cwd === "string" ? params.cwd : undefined),
     env: spec.success ? spec.data.env : undefined,
   };
 }
@@ -51,6 +70,7 @@ let stdoutFilterInstalled = false;
 const hostFile = fileURLToPath(import.meta.url);
 let proxyStateDir: string | undefined;
 const autoApproveThreads = new Map<string, boolean>();
+const promptOnSandboxEscapeThreads = new Map<string, boolean>();
 const commandDescriptionsThreads = new Map<string, boolean>();
 
 export function rememberApprovalSetting(request: any) {
@@ -58,6 +78,7 @@ export function rememberApprovalSetting(request: any) {
     const threadId = request?.params?.threadId;
     if (typeof threadId === "string") {
       autoApproveThreads.delete(threadId);
+      promptOnSandboxEscapeThreads.delete(threadId);
       commandDescriptionsThreads.delete(threadId);
     }
     return;
@@ -71,6 +92,7 @@ export function rememberApprovalSetting(request: any) {
     if (typeof providerOptions?.commandDescriptionsEnabled === "boolean") {
       commandDescriptionsThreads.set(parsed.data.threadId, providerOptions.commandDescriptionsEnabled);
     }
+    promptOnSandboxEscapeThreads.set(parsed.data.threadId, providerOptions?.promptOnSandboxEscape !== false);
     autoApproveThreads.set(parsed.data.threadId,
       providerOptions?.autoApprove === true &&
       parsed.data.options.permissionMode === "accept-edits" && parsed.data.options.permissionEscalation === "ask");
@@ -112,15 +134,25 @@ function applyAntigravityDefaults(line: string, parsed: unknown): { line: string
   return { line, parsed };
 }
 
+function isSandboxEscapeApproval(payload: any): boolean {
+  const reason = typeof payload?.reason === "string" ? payload.reason : "";
+  if (/\b(?:outside\s+(?:of\s+)?sandbox|bypass\s*sandbox|sandbox\s+escape)\b/i.test(reason)) return true;
+  const badges = payload?.subject?.presentation?.badges;
+  if (Array.isArray(badges) && badges.some((b: any) => typeof b?.label === "string" && /outside\s+(?:of\s+)?sandbox/i.test(b.label))) return true;
+  return payload?.subject?.rawInput?.BypassSandbox === true;
+}
+
 export function interceptApproval(line: string): boolean {
   if (interceptSubagentApproval(line)) return true;
   let message: any;
   try { message = JSON.parse(line); } catch { return false; }
   if (isSubagentApprovalForDisabledThread(message)) return false;
+  const threadId = message?.params?.threadId;
   if (message?.jsonrpc !== "2.0" || message.method !== "interaction/request" ||
       (typeof message.id !== "string" && typeof message.id !== "number") ||
-      !autoApproveThreads.get(message.params?.threadId)) return false;
+      !autoApproveThreads.get(threadId)) return false;
   const payload = message.params?.payload;
+  if (promptOnSandboxEscapeThreads.get(threadId) !== false && isSandboxEscapeApproval(payload)) return false;
   if (payload?.kind !== "approval" || typeof payload.subject?.itemId !== "string" ||
       !["command", "file_change", "tool_use"].includes(payload.subject.kind) ||
       !(payload.reason === null || typeof payload.reason === "string") ||
@@ -176,27 +208,80 @@ export const experimental_providerBridge = {
         write(`${JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId: stopThreadId, deltas: closeDeltas } })}\n`);
       }
     }
-    const usageRequest = parseUsageRequest(subagentTransformed.parsed);
-    if (usageRequest !== null) {
-      void readAntigravityProviderUsage({
-        command: usageRequest.command,
-        cwd: usageRequest.cwd,
-        env: { ...process.env, ...usageRequest.env },
-      }).then(result => {
-        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: usageRequest.id, result })}\n`);
-      }).catch(error => {
-        const result = {
-          supported: true,
-          usage: {
-            status: "error",
-            message: error instanceof Error ? error.message : "Antigravity CLI usage could not be collected.",
-            planLabel: null,
-            accountEmail: null,
-          },
-        };
-        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: usageRequest.id, result })}\n`);
-      });
-      return;
+    const maintenanceRequest = parseMaintenanceRequest(subagentTransformed.parsed);
+    if (maintenanceRequest !== null) {
+      const probeOptions = {
+        command: maintenanceRequest.command,
+        cwd: maintenanceRequest.cwd,
+        env: { ...process.env, ...maintenanceRequest.env },
+      };
+      if (maintenanceRequest.method === "provider/usage") {
+        void readAntigravityProviderUsage(probeOptions).then(result => {
+          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+        }).catch(error => {
+          const result = {
+            supported: true,
+            usage: {
+              status: "error",
+              message: error instanceof Error ? error.message : "Antigravity CLI usage could not be collected.",
+              planLabel: null,
+              accountEmail: null,
+            },
+          };
+          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+        });
+        return;
+      }
+      if (maintenanceRequest.method === "provider/health") {
+        void readAntigravityHealth(probeOptions).then(result => {
+          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+        }).catch(error => {
+          process.stdout.write(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: maintenanceRequest.id,
+            result: {
+              supported: true,
+              health: {
+                status: "unknown",
+                statusMessage: error instanceof Error ? error.message : "Antigravity CLI health check failed.",
+                accountEmail: null,
+                planLabel: null,
+                installedVersion: null,
+                minimumSupportedVersion: "1.5.0",
+                canInstall: false,
+                canUpdate: false,
+                loginCommand: "agy acp --login",
+              },
+            },
+          })}\n`);
+        });
+        return;
+      }
+      if (maintenanceRequest.method === "provider/installation/status") {
+        void readAntigravityInstallationStatus(probeOptions).then(result => {
+          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+        }).catch(error => {
+          process.stdout.write(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: maintenanceRequest.id,
+            error: { code: -32000, message: error instanceof Error ? error.message : "Failed to inspect Antigravity CLI installation." },
+          })}\n`);
+        });
+        return;
+      }
+      if (maintenanceRequest.method === "provider/installation/run") {
+        const action = maintenanceRequest.action ?? "update";
+        void planAntigravityInstallationRun(action, probeOptions).then(result => {
+          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+        }).catch(error => {
+          process.stdout.write(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: maintenanceRequest.id,
+            result: { available: false, message: error instanceof Error ? error.message : "Failed to plan Antigravity CLI maintenance." },
+          })}\n`);
+        });
+        return;
+      }
     }
     experimental_acpProviderBridge.handleLine(mapPromptMode(subagentTransformed.line, subagentTransformed.parsed));
   },

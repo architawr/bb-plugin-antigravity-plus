@@ -93,3 +93,14 @@ test('empty env overrides neutralize inherited profile directory env vars withou
     else process.env.BB_ANTIGRAVITY_GEMINI_DIR = original;
   }
 });
+
+test('proxy launch spec sets ELECTRON_RUN_AS_NODE=1 for Electron hosts', () => {
+  const spec = { command: 'agy', args: ['acp', '--disable-telemetry'], env: {} };
+  resolveAntigravityLaunchSpec(
+    { method: 'thread/start', params: { options: { providerOptions: { acpLaunchSpec: spec } } } },
+    { hostFile: '/tmp/host.js', stateDir: '/tmp/state' },
+  );
+  assert.equal(spec.command, process.execPath);
+  assert.equal(spec.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(spec.env.BB_AGY_ACP_PROXY_STATE_DIR, '/tmp/state');
+});
