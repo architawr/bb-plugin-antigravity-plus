@@ -9,6 +9,39 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (m.method === 'session/prompt') {
     promptId = m.id;
     const promptText = Array.isArray(m.params?.prompt) ? m.params.prompt.map(p => p.text || '').join('\n') : '';
+    if (promptText.includes('sandbox-escape-test')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'fake-session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'escape-tool',
+            title: 'run_command',
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: { CommandLine: 'sudo true', BypassSandbox: true },
+          },
+        },
+      });
+      send({
+        jsonrpc: '2.0',
+        id: 300,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'fake-session',
+          toolCall: {
+            toolCallId: 'escape-tool',
+            title: 'run_command',
+            kind: 'execute',
+            rawInput: { CommandLine: 'sudo true', BypassSandbox: true },
+          },
+          options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Deny', kind: 'reject_once' }],
+        },
+      });
+      return;
+    }
     if (promptText.includes('subagent-test')) {
       send({
         jsonrpc: '2.0',
@@ -24,7 +57,7 @@ createInterface({ input: process.stdin }).on('line', line => {
     }
     send({ jsonrpc: '2.0', id: 100, method: 'session/request_permission', params: { sessionId: 'fake-session', toolCall: { toolCallId: 'tool', title: 'Run command', kind: 'execute' }, options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Deny', kind: 'reject_once' }] } });
   }
-  if ((m.id === 100 || m.id === 200) && m.result) {
+  if ((m.id === 100 || m.id === 200 || m.id === 300) && m.result) {
     if (m.id === 100) {
       send({
         jsonrpc: '2.0',

@@ -57,6 +57,28 @@ try {
       options: subagentOptions,
     });
     await wait(m => JSON.stringify(m).includes('\\"optionId\\":\\"no\\"'));
+
+    // Real end-to-end test: BypassSandbox: true with empty content MUST NOT be auto-approved under promptOnSandboxEscape
+    const guardedOptions = {
+      ...options,
+      providerOptions: { ...options.providerOptions, autoApprove: true, promptOnSandboxEscape: true },
+    };
+    send(5, 'turn/start', {
+      threadId: 'thread',
+      providerThreadId: started.result.providerThreadId,
+      clientRequestId: 'creq_456789abcd',
+      input: [{ type: 'text', text: 'sandbox-escape-test' }],
+      options: guardedOptions,
+    });
+    const escapeInteraction = await wait(
+      m => m.method === 'interaction/request' && m.params?.payload?.subject?.itemId === 'escape-tool',
+    );
+    bridge.handleLine(JSON.stringify({
+      jsonrpc: '2.0',
+      id: escapeInteraction.id,
+      result: { decision: 'deny', grantedPermissions: null },
+    }));
+    await wait(m => m.method === 'thread/delta' && JSON.stringify(m).includes('escape-tool'));
   }
 
   bridge.onClose?.();

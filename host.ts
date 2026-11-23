@@ -12,24 +12,109 @@ import { readAntigravityProviderUsage } from "./usage.ts";
 import { planAntigravityInstallationRun, readAntigravityHealth, readAntigravityInstallationStatus } from "./maintenance.ts";
 import { resolveAntigravityLaunchSpec } from "./cli.ts";
 import { AGY_ACP_PROXY_FLAG, runAgyAcpProxy } from "./acp-proxy.ts";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-registerAntigravityAcpDialect();
+const isAcpProxyProcess = process.argv[2] === AGY_ACP_PROXY_FLAG;
+const MAX_TRACKED_SANDBOX_ESCAPES = 500;
 
 let rawStdoutWrite: typeof process.stdout.write | null = null;
-export const backgroundTaskTracker = createBackgroundTaskTracker({
-  persistPath: defaultBackgroundTaskStatePath(),
-  onAsyncDeltas(threadId, deltas) {
-    if (!deltas.length) return;
-    const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
-    write(`${JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId, deltas } })}\n`);
-  },
-});
+let trackerInstance: ReturnType<typeof createBackgroundTaskTracker> | null = null;
 
-onToolUpdate(event => {
-  backgroundTaskTracker.recordToolEvent(event as any);
-});
+function getBackgroundTaskTracker() {
+  if (!trackerInstance) {
+    trackerInstance = createBackgroundTaskTracker({
+      persistPath: defaultBackgroundTaskStatePath(),
+      onAsyncDeltas(threadId, deltas) {
+        if (!deltas.length) return;
+        const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
+        write(`${JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId, deltas } })}\n`);
+      },
+    });
+  }
+  return trackerInstance;
+}
+
+// Keep exported symbol available for existing callers/tests, avoiding sync disk I/O in ACP proxy child processes.
+export const backgroundTaskTracker = isAcpProxyProcess ? null : getBackgroundTaskTracker();
+
+const unscopedSandboxEscapeIds = new Set<string>();
+const sandboxEscapeByThread = new Map<string, Set<string>>();
+const threadCwds = new Map<string, string>();
+
+function rememberUnscopedSandboxEscape(toolCallId: string): void {
+  if (unscopedSandboxEscapeIds.size >= MAX_TRACKED_SANDBOX_ESCAPES) {
+    const oldest = unscopedSandboxEscapeIds.values().next().value;
+    if (oldest) unscopedSandboxEscapeIds.delete(oldest);
+  }
+  unscopedSandboxEscapeIds.add(toolCallId);
+}
+
+function rememberThreadSandboxEscape(threadId: string, itemId: string): void {
+  let set = sandboxEscapeByThread.get(threadId);
+  if (!set) {
+    set = new Set<string>();
+    sandboxEscapeByThread.set(threadId, set);
+  }
+  if (set.size >= MAX_TRACKED_SANDBOX_ESCAPES) {
+    const oldest = set.values().next().value;
+    if (oldest) set.delete(oldest);
+  }
+  set.add(itemId);
+}
+
+export function recordSandboxEscapeToolCall(toolCallId: string, threadId?: string): void {
+  if (!toolCallId) return;
+  if (threadId) rememberThreadSandboxEscape(threadId, toolCallId);
+  else rememberUnscopedSandboxEscape(toolCallId);
+}
+
+function recordSandboxEscapeDeltas(line: string): string {
+  if (!line.includes("Outside of sandbox") && !line.includes("outside of sandbox")) return line;
+  let message: any;
+  try { message = JSON.parse(line); } catch { return line; }
+  const params = message?.params;
+  if (message?.method !== "thread/delta" || typeof params?.threadId !== "string" || !Array.isArray(params.deltas)) {
+    return line;
+  }
+  for (const delta of params.deltas) {
+    const presentation = delta?.presentation;
+    if (!presentation || typeof presentation !== "object") continue;
+    const hasBadge =
+      (typeof presentation.badge?.label === "string" && /outside\s+(?:of\s+)?sandbox/i.test(presentation.badge.label)) ||
+      (Array.isArray(presentation.badges) &&
+        presentation.badges.some((b: any) => typeof b?.label === "string" && /outside\s+(?:of\s+)?sandbox/i.test(b.label)));
+    if (!hasBadge) continue;
+    const itemId =
+      typeof delta.providerItemId === "string" && delta.providerItemId.length > 0
+        ? delta.providerItemId
+        : typeof delta.item?.id === "string" && delta.item.id.length > 0
+          ? delta.item.id
+          : null;
+    if (itemId) rememberThreadSandboxEscape(params.threadId, itemId);
+  }
+  return line;
+}
+
+if (!isAcpProxyProcess) {
+  registerAntigravityAcpDialect();
+  onToolUpdate(event => {
+    const rawInput = event?.rawInput && typeof event.rawInput === "object" ? (event.rawInput as Record<string, unknown>) : null;
+    if (rawInput?.BypassSandbox === true && typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+      rememberUnscopedSandboxEscape(event.toolCallId);
+    }
+    getBackgroundTaskTracker().recordToolEvent(event as any);
+  });
+}
+
+function sanitizeProbeEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key === "ELECTRON_RUN_AS_NODE" || typeof value !== "string") continue;
+    result[key] = value;
+  }
+  return result;
+}
 
 function parseMaintenanceRequest(parsed: unknown): {
   id: string | number;
@@ -59,13 +144,17 @@ function parseMaintenanceRequest(parsed: unknown): {
       : undefined;
   const spec = experimental_acpLaunchSpecSchema.safeParse(providerOptions?.acpLaunchSpec);
   const action = params?.action === "install" || params?.action === "update" ? params.action : undefined;
+  const envVars =
+    params?.envVars && typeof params.envVars === "object" && !Array.isArray(params.envVars)
+      ? (params.envVars as Record<string, string>)
+      : undefined;
   return {
     id,
     method,
     action,
     command: spec.success ? spec.data.command : "agy",
     cwd: spec.success ? spec.data.cwd : (typeof params?.cwd === "string" ? params.cwd : undefined),
-    env: spec.success ? spec.data.env : undefined,
+    env: { ...(spec.success ? spec.data.env : undefined), ...envVars },
   };
 }
 
@@ -83,22 +172,45 @@ export function rememberApprovalSetting(request: any) {
       autoApproveThreads.delete(threadId);
       promptOnSandboxEscapeThreads.delete(threadId);
       commandDescriptionsThreads.delete(threadId);
+      sandboxEscapeByThread.delete(threadId);
+      threadCwds.delete(threadId);
     }
     return;
   }
-  const schema = request?.method === "thread/start" ? threadStartParamsSchema
-    : request?.method === "thread/resume" ? threadResumeParamsSchema
-    : request?.method === "turn/start" ? turnStartParamsSchema : null;
-  const parsed = schema?.safeParse(request.params);
-  if (parsed?.success) {
-    const providerOptions = parsed.data.options.providerOptions;
+  const method = request?.method;
+  const params = request?.params;
+  if (!params || typeof params !== "object" || typeof params.threadId !== "string") return;
+
+  if (typeof params.cwd === "string" && params.cwd.trim().length > 0) {
+    threadCwds.set(params.threadId, resolve(params.cwd));
+  }
+
+  const schema = method === "thread/start" ? threadStartParamsSchema
+    : method === "thread/resume" ? threadResumeParamsSchema
+    : method === "turn/start" ? turnStartParamsSchema : null;
+  const parsed = schema?.safeParse(params);
+  const options = parsed?.success
+    ? parsed.data.options
+    : (method === "turn/steer" || method === "thread/fork") && params.options && typeof params.options === "object"
+      ? params.options
+      : null;
+
+  if (options && typeof options === "object") {
+    const providerOptions = options.providerOptions;
     if (typeof providerOptions?.commandDescriptionsEnabled === "boolean") {
-      commandDescriptionsThreads.set(parsed.data.threadId, providerOptions.commandDescriptionsEnabled);
+      commandDescriptionsThreads.set(params.threadId, providerOptions.commandDescriptionsEnabled);
     }
-    promptOnSandboxEscapeThreads.set(parsed.data.threadId, providerOptions?.promptOnSandboxEscape !== false);
-    autoApproveThreads.set(parsed.data.threadId,
-      providerOptions?.autoApprove === true &&
-      parsed.data.options.permissionMode === "accept-edits" && parsed.data.options.permissionEscalation === "ask");
+    if (providerOptions && typeof providerOptions === "object") {
+      promptOnSandboxEscapeThreads.set(params.threadId, providerOptions.promptOnSandboxEscape !== false);
+    }
+    if (typeof options.permissionMode === "string" && typeof options.permissionEscalation === "string") {
+      autoApproveThreads.set(
+        params.threadId,
+        providerOptions?.autoApprove === true &&
+          options.permissionMode === "accept-edits" &&
+          options.permissionEscalation === "ask",
+      );
+    }
   }
 }
 
@@ -137,12 +249,33 @@ function applyAntigravityDefaults(line: string, parsed: unknown): { line: string
   return { line, parsed };
 }
 
-function isSandboxEscapeApproval(payload: any): boolean {
+function isPathOutsideWorkspace(writeScope: string, workspaceCwd: string): boolean {
+  if (!isAbsolute(writeScope)) return false;
+  const rel = relative(resolve(workspaceCwd), resolve(writeScope));
+  return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel);
+}
+
+function isSandboxEscapeApproval(payload: any, threadId?: string): boolean {
+  const itemId = typeof payload?.subject?.itemId === "string" ? payload.subject.itemId : null;
+  if (itemId) {
+    if (unscopedSandboxEscapeIds.has(itemId)) return true;
+    if (threadId && sandboxEscapeByThread.get(threadId)?.has(itemId)) return true;
+  }
   const reason = typeof payload?.reason === "string" ? payload.reason : "";
   if (/\b(?:outside\s+(?:of\s+)?sandbox|bypass\s*sandbox|sandbox\s+escape)\b/i.test(reason)) return true;
   const badges = payload?.subject?.presentation?.badges;
   if (Array.isArray(badges) && badges.some((b: any) => typeof b?.label === "string" && /outside\s+(?:of\s+)?sandbox/i.test(b.label))) return true;
-  return payload?.subject?.rawInput?.BypassSandbox === true;
+  if (payload?.subject?.rawInput?.BypassSandbox === true) return true;
+  if (
+    payload?.subject?.kind === "file_change" &&
+    typeof payload.subject.writeScope === "string" &&
+    threadId &&
+    threadCwds.has(threadId) &&
+    isPathOutsideWorkspace(payload.subject.writeScope, threadCwds.get(threadId)!)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function interceptApproval(line: string): boolean {
@@ -155,7 +288,7 @@ export function interceptApproval(line: string): boolean {
       (typeof message.id !== "string" && typeof message.id !== "number") ||
       !autoApproveThreads.get(threadId)) return false;
   const payload = message.params?.payload;
-  if (promptOnSandboxEscapeThreads.get(threadId) !== false && isSandboxEscapeApproval(payload)) return false;
+  if (promptOnSandboxEscapeThreads.get(threadId) !== false && isSandboxEscapeApproval(payload, threadId)) return false;
   if (payload?.kind !== "approval" || typeof payload.subject?.itemId !== "string" ||
       !["command", "file_change", "tool_use"].includes(payload.subject.kind) ||
       !(payload.reason === null || typeof payload.reason === "string") ||
@@ -173,6 +306,7 @@ export function interceptApproval(line: string): boolean {
   })));
   return true;
 }
+
 function ensureStdoutFilter() {
   if (stdoutFilterInstalled) return;
   stdoutFilterInstalled = true;
@@ -181,11 +315,17 @@ function ensureStdoutFilter() {
   rawStdoutWrite = write;
   const output = modeControlOutput(
     interceptApproval,
-    line => backgroundTaskTracker.processStdoutLine(applyThreadCommandDescriptions(line, commandDescriptionsThreads)),
+    line => getBackgroundTaskTracker().processStdoutLine(
+      recordSandboxEscapeDeltas(applyThreadCommandDescriptions(line, commandDescriptionsThreads)),
+    ),
   );
   output.on("data", chunk => write(chunk));
   process.stdout.write = ((chunk: any, encodingOrCallback?: any, callback?: any) =>
     output.write(chunk, encodingOrCallback, callback)) as typeof process.stdout.write;
+}
+
+function disposeTracker() {
+  trackerInstance?.dispose();
 }
 
 export const experimental_providerBridge = {
@@ -193,6 +333,18 @@ export const experimental_providerBridge = {
   start(context?: { dataDir?: string }) {
     if (typeof context?.dataDir === "string") proxyStateDir = join(context.dataDir, "acp-proxy", "instructions");
     ensureStdoutFilter();
+  },
+  onClose() {
+    disposeTracker();
+    (experimental_acpProviderBridge as any).onClose?.();
+  },
+  onSigterm() {
+    disposeTracker();
+    (experimental_acpProviderBridge as any).onSigterm?.();
+  },
+  onSigint() {
+    disposeTracker();
+    (experimental_acpProviderBridge as any).onSigint?.();
   },
   handleLine(line: string) {
     ensureStdoutFilter();
@@ -203,7 +355,7 @@ export const experimental_providerBridge = {
     const withDefaults = applyAntigravityDefaults(line, parsed);
     const subagentTransformed = transformSubagentRequest(withDefaults.line, withDefaults.parsed);
     rememberApprovalSetting(subagentTransformed.parsed);
-    const closeDeltas = backgroundTaskTracker.handleInboundRequest(subagentTransformed.parsed);
+    const closeDeltas = getBackgroundTaskTracker().handleInboundRequest(subagentTransformed.parsed);
     if (closeDeltas.length > 0) {
       const stopThreadId = (subagentTransformed.parsed as Record<string, any> | null)?.params?.threadId;
       if (typeof stopThreadId === "string") {
@@ -216,7 +368,7 @@ export const experimental_providerBridge = {
       const probeOptions = {
         command: maintenanceRequest.command,
         cwd: maintenanceRequest.cwd,
-        env: { ...process.env, ...maintenanceRequest.env },
+        env: sanitizeProbeEnv({ ...process.env, ...maintenanceRequest.env }),
       };
       if (maintenanceRequest.method === "provider/usage") {
         void readAntigravityProviderUsage(probeOptions).then(result => {
@@ -298,4 +450,4 @@ export default experimental_defineHostEntry({
 });
 
 // bb imports this module as the provider bridge and host RPC entry; agy sessions start it again as the ACP proxy.
-if (process.argv[2] === AGY_ACP_PROXY_FLAG) void runAgyAcpProxy(process.argv.slice(3));
+if (isAcpProxyProcess) void runAgyAcpProxy(process.argv.slice(3));

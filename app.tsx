@@ -74,6 +74,7 @@ function useSwarmTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
     input: { threadId },
   });
 
+  const hasData = query.data !== undefined;
   const exists = Boolean(query.data?.exists);
   const swarmId = query.data?.swarmId ?? query.data?.providerThreadId ?? null;
   const createdAt = query.data?.createdAt ?? null;
@@ -82,6 +83,8 @@ function useSwarmTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
   const prevStateRef = useRef<{ threadId: string; exists: boolean } | null>(null);
 
   useEffect(() => {
+    if (!hasData) return;
+
     const prev = prevStateRef.current;
     const transitionedToLive = prev !== null && prev.threadId === threadId && !prev.exists && exists;
     prevStateRef.current = { threadId, exists };
@@ -94,15 +97,17 @@ function useSwarmTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
       return;
     }
 
-    autoOpenedSwarms.add(key);
     try {
-      panel.openTab({
+      const opened = panel.openTab({
         tab: { id: "swarm", context: { kind: "thread" }, availability: "fixed" },
       });
+      if (opened) {
+        autoOpenedSwarms.add(key);
+      }
     } catch {
       // Ignore surfaces without a side panel.
     }
-  }, [autoOpenEnabled, createdAt, exists, panel, swarmId, threadId]);
+  }, [autoOpenEnabled, createdAt, exists, hasData, panel, swarmId, threadId]);
 
   return exists;
 }
@@ -153,11 +158,18 @@ function SwarmBoardTab({ threadId }: ExperimentalThreadTabProps) {
     input: { threadId },
   });
 
+  const refetchRef = useRef(query.refetch);
+  refetchRef.current = query.refetch;
+
+  useEffect(() => {
+    setSelectedAgent(null);
+  }, [threadId]);
+
   useEffect(() => {
     if (!isVisible) return;
-    void query.refetch();
+    void refetchRef.current();
     const timer = window.setInterval(() => {
-      void query.refetch();
+      void refetchRef.current();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [isVisible, threadId]);
@@ -359,12 +371,12 @@ function SwarmBoardTab({ threadId }: ExperimentalThreadTabProps) {
             </div>
           ) : (
             <div className="space-y-2">
-              {visibleMessages.map((msg) => {
+              {visibleMessages.map((msg, idx) => {
                 const tag = classifyMessageTag(msg);
                 const shortTime = formatShortTime(msg.time);
                 return (
                   <article
-                    key={`${msg.seq}-${msg.agent}`}
+                    key={`${msg.seq}-${msg.agent}-${idx}`}
                     className="rounded-md border border-border bg-card p-2.5 text-xs"
                   >
                     <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">

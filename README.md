@@ -94,7 +94,7 @@ Manual compaction wires BB's Compact button and `bb thread compact` to Antigravi
 
 ### 1. Prepare the agent host
 
-You need BB 0.48+, Node.js 22+, and Antigravity CLI `1.5.0` or later (`1.5.14+` recommended for manual `/compact`) installed on the machine where threads run.
+You need BB 0.50+, Node.js 22+, and Antigravity CLI `1.5.0` or later (`1.5.14+` recommended for manual `/compact`) installed on the machine where threads run.
 
 Verify your CLI and sign in:
 

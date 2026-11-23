@@ -19,7 +19,7 @@ The plugin inherits your CLI sandbox settings unless you enable the optional `--
 
 ## Onboarding and requirements
 
-Requires BB 0.48+, Node.js 22+, Antigravity CLI 1.5.0+ (`1.5.14+` recommended for `/compact`) on the target host, and a signed-in Google account. Provider quota and charges apply. Remote hosts need their own CLI install and login.
+Requires BB 0.50+, Node.js 22+, Antigravity CLI 1.5.0+ (`1.5.14+` recommended for `/compact`) on the target host, and a signed-in Google account. Provider quota and charges apply. Remote hosts need their own CLI install and login.
 
 Built-in health checks verify CLI version and sign-in without spending tokens, guide signed-out users to `agy acp --login`, and wire native **Install** and **Update** (`agy update`) actions in BB. Verified on macOS (BB Desktop), Linux, and Windows.
 

@@ -2,7 +2,11 @@ import { experimental_execHostFile } from "@get-bb/plugin-sdk/process";
 import type { ProviderUsageResult } from "@get-bb/plugin-sdk/provider-bridge";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { resolveAntigravityCommand } from "./cli.ts";
+import {
+  BB_ANTIGRAVITY_APP_DATA_DIR_ENV,
+  BB_ANTIGRAVITY_GEMINI_DIR_ENV,
+  resolveAntigravityCommand,
+} from "./cli.ts";
 
 const USAGE_TIMEOUT_MS = 15_000;
 const USAGE_CACHE_TTL_MS = 60_000;
@@ -212,9 +216,14 @@ export async function readAntigravityProviderUsage(options?: {
     if (!resolvedCommand) {
       return { supported: true, usage: { status: "not_installed" } };
     }
+    const usageArgs = ["-p", "/usage", "--output-format", "json"];
+    const geminiDir = env[BB_ANTIGRAVITY_GEMINI_DIR_ENV]?.trim();
+    if (geminiDir) usageArgs.push("--gemini-dir", geminiDir);
+    const appDataDir = env[BB_ANTIGRAVITY_APP_DATA_DIR_ENV]?.trim();
+    if (appDataDir) usageArgs.push("--app-data-dir", appDataDir);
     const { stdout, stderr } = await execFile(
       resolvedCommand,
-      ["-p", "/usage", "--output-format", "json"],
+      usageArgs,
       {
         cwd,
         env,

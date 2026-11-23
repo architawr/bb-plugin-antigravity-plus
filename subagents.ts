@@ -42,11 +42,19 @@ export function createSubagentController(options: { replyToBridge?: (line: strin
       clearThread(threadId);
       return { line, parsed, providerSubagentsEnabled: true };
     }
-    const schema = request?.method === "thread/start" ? threadStartParamsSchema : request?.method === "thread/resume" ? threadResumeParamsSchema : request?.method === "turn/start" ? turnStartParamsSchema : undefined;
-    if (!schema) return { line, parsed, providerSubagentsEnabled: !isSubagentsDisabled(threadId) };
-    const validated = schema.safeParse(params);
-    const requestOptions = record(validated.success ? validated.data.options : params?.options);
-    const enabled = resolveProviderSubagentsEnabled(record(requestOptions?.providerOptions), request?.method === "turn/start" ? threads.get(threadId) : undefined);
+    const method = request?.method;
+    const isTurnOrFork =
+      method === "thread/start" ||
+      method === "thread/resume" ||
+      method === "thread/fork" ||
+      method === "turn/start" ||
+      method === "turn/steer";
+    if (!isTurnOrFork) return { line, parsed, providerSubagentsEnabled: !isSubagentsDisabled(threadId) };
+    const schema = method === "thread/start" ? threadStartParamsSchema : method === "thread/resume" ? threadResumeParamsSchema : method === "turn/start" ? turnStartParamsSchema : undefined;
+    const validated = schema?.safeParse(params);
+    const requestOptions = record(validated?.success ? validated.data.options : params?.options);
+    const preservePrevious = method === "turn/start" || method === "turn/steer" || method === "thread/fork";
+    const enabled = resolveProviderSubagentsEnabled(record(requestOptions?.providerOptions), preservePrevious ? threads.get(threadId) : undefined);
     threads.set(threadId, enabled);
     if (enabled) return { line, parsed, providerSubagentsEnabled: enabled };
     const originalOptions = record(params?.options) ?? {};

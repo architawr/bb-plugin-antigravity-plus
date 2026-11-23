@@ -133,3 +133,29 @@ test("readSwarmBoard caps board output to the latest 200 messages", () => {
     assert.equal(snapshot.messages[199].seq, 215);
   });
 });
+
+test("readSwarmBoard tail-reads oversized board.jsonl without losing trailing posts and rejects oversized JSON objects", () => {
+  withTempAppData((appDataDir) => {
+    const swarmDir = join(appDataDir, "brain", VALID_ID, ".system_generated", "swarm");
+    mkdirSync(swarmDir, { recursive: true });
+    // Oversized members.json (> maxFileBytes) must not be tail-sliced into invalid JSON
+    writeFileSync(
+      join(swarmDir, "members.json"),
+      JSON.stringify({ title: "Big", padding: "x".repeat(4096), members: {} }),
+    );
+    const lines = [
+      JSON.stringify({ seq: 1, agent: "coordinator", text: "a".repeat(600) }),
+      JSON.stringify({ seq: 2, agent: "worker-a", text: "b".repeat(600) }),
+      JSON.stringify({ seq: 3, agent: "worker-b", text: "@coordinator [done] latest line" }),
+    ];
+    writeFileSync(join(swarmDir, "board.jsonl"), lines.join("\n"));
+
+    const snapshot = readSwarmBoard(VALID_ID, { appDataDir, maxFileBytes: 512 });
+    assert.equal(snapshot.exists, true);
+    assert.equal(snapshot.title, null);
+    assert.equal(snapshot.truncated, true);
+    assert.equal(snapshot.messages.length, 1);
+    assert.equal(snapshot.messages[0].seq, 3);
+    assert.match(snapshot.messages[0].text, /latest line/);
+  });
+});

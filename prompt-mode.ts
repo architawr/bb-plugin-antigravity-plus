@@ -4,7 +4,7 @@ export function mapPromptMode(line: string, parsedLine?: unknown): string {
   if (arguments.length < 2) {
     try { request = JSON.parse(line); } catch { return line; }
   }
-  if (request?.method !== "turn/start" || !request.params?.options) return line;
+  if ((request?.method !== "turn/start" && request?.method !== "turn/steer") || !request.params?.options) return line;
   const options = request.params.options;
   options.sessionOptions = {
     ...options.sessionOptions,

@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import plugin from "../server.ts";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BANNED_MARKETPLACE_WORDS =
   /\b(powerful|seamless|easy|simple|fast|best|modern|beautiful|robust|intuitive|first-class)\b/gi;
 
@@ -46,6 +47,7 @@ const readme = readUtf8("README.md");
 const overview = readUtf8("PLUGIN_OVERVIEW.md");
 const security = readUtf8("SECURITY.md");
 const review = readUtf8("docs/REVIEW.md");
+const features = readUtf8("docs/FEATURES.md");
 const release = readUtf8("docs/RELEASE.md");
 const skill = readUtf8("skills/antigravity-plus/SKILL.md");
 const usageSrc = readUtf8("usage.ts");
@@ -71,6 +73,7 @@ for (const retired of ["processPerSession", "autoApprove", "promptOnSandboxEscap
     for (const [label, content] of [
       ["README.md", readme],
       ["PLUGIN_OVERVIEW.md", overview],
+      ["docs/FEATURES.md", features],
       ["SECURITY.md", security],
       ["skills/antigravity-plus/SKILL.md", skill],
     ]) {
@@ -226,9 +229,10 @@ for (const rel of trackedFiles) {
     continue;
   }
   const content = readUtf8(rel);
-  const homeMatch = content.match(/\/(?:Users|home)\/([a-zA-Z0-9._-]+)/g) ?? [];
+  const homeMatch = content.match(/(?:\/(?:Users|home)\/|[A-Za-z]:\\Users\\)([a-zA-Z0-9._-]+)/g) ?? [];
   for (const hit of homeMatch) {
-    const user = hit.split("/")[2];
+    const parts = hit.split(/[\\/]/).filter(Boolean);
+    const user = parts[parts.length - 1] ?? "";
     if (!["u", "user", "alice", "bob", "dev", "test", "example", "..."].includes(user.toLowerCase())) {
       fail(`Local home path "${hit}" found in ${rel}`);
     }

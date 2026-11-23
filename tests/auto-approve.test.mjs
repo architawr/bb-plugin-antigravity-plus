@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rememberApprovalSetting, interceptApproval } from '../host.ts';
+import { rememberApprovalSetting, interceptApproval, recordSandboxEscapeToolCall } from '../host.ts';
 import { rememberSubagentSetting } from '../subagents.ts';
 
 const options = (autoApprove, permissionEscalation = 'ask', extraProviderOptions = {}) => ({
@@ -65,5 +65,32 @@ test('promptOnSandboxEscape surfaces sandbox escape prompts even when autoApprov
 
   assert.equal(interceptApproval(request('unguarded', escapeByReason)), true);
   assert.equal(interceptApproval(request('unguarded', escapeByBadge)), true);
+
+  // Tracked BypassSandbox toolCallId blocks auto-approval even when payload has no reason/presentation/rawInput
+  recordSandboxEscapeToolCall('tracked-escape-cmd', 'guarded');
+  const trackedPayload = {
+    kind: 'approval',
+    subject: { kind: 'command', itemId: 'tracked-escape-cmd', command: 'sudo true', cwd: null, actions: [], sessionGrant: null },
+    reason: null,
+    availableDecisions: ['allow_once', 'deny'],
+  };
+  assert.equal(interceptApproval(request('guarded', trackedPayload)), false);
+
+  // Out-of-workspace file_change is not auto-approved in guarded mode
+  const outsideFile = {
+    kind: 'approval',
+    subject: { kind: 'file_change', itemId: 'outside-edit', writeScope: '/etc/hosts', sessionGrant: null },
+    reason: null,
+    availableDecisions: ['allow_once', 'deny'],
+  };
+  assert.equal(interceptApproval(request('guarded', outsideFile)), false);
+  assert.equal(interceptApproval(request('unguarded', outsideFile)), true);
+
+  // turn/steer updates approval policy mid-thread
+  rememberApprovalSetting({
+    method: 'turn/steer',
+    params: { threadId: 'guarded', options: options(false, 'ask', { promptOnSandboxEscape: true }) },
+  });
+  assert.equal(interceptApproval(request('guarded', ordinary)), false);
 });
 

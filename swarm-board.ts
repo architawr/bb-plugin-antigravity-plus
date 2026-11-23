@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveAgyAppDataDir } from "./agy-fork.ts";
@@ -20,6 +20,7 @@ export interface ReadSwarmBoardOptions {
   appDataDir?: string;
   env?: NodeJS.ProcessEnv;
   home?: string;
+  maxFileBytes?: number;
 }
 
 export function resolveSwarmAppDataDir(options?: ReadSwarmBoardOptions): string {
@@ -33,13 +34,51 @@ export function resolveSwarmAppDataDir(options?: ReadSwarmBoardOptions): string 
   return resolveAgyAppDataDir(args, options?.home ?? homedir());
 }
 
-function readBoundedText(path: string): string | null {
+/** Reads a JSON file only if its size fits within maxBytes; never tail-slices a JSON object. */
+function readBoundedJsonText(path: string, maxBytes: number): string | null {
   if (!existsSync(path)) return null;
+  let fd: number | null = null;
   try {
-    const raw = readFileSync(path, "utf8");
-    return raw.length > MAX_JSON_FILE_BYTES ? raw.slice(-MAX_JSON_FILE_BYTES) : raw;
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    if (size === 0 || size > maxBytes) return null;
+    const buf = Buffer.allocUnsafe(size);
+    const bytesRead = readSync(fd, buf, 0, size, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
   } catch {
     return null;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Reads at most the trailing maxBytes of an NDJSON file without loading larger files into memory. */
+function readBoundedTailLines(path: string, maxBytes: number): { text: string; tailTruncated: boolean } | null {
+  if (!existsSync(path)) return null;
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    if (size === 0) return { text: "", tailTruncated: false };
+    const start = Math.max(0, size - maxBytes);
+    const toRead = size - start;
+    const buf = Buffer.allocUnsafe(toRead);
+    const bytesRead = readSync(fd, buf, 0, toRead, start);
+    let text = buf.subarray(0, bytesRead).toString("utf8");
+    const tailTruncated = start > 0;
+    if (tailTruncated) {
+      const firstNewline = text.indexOf("\n");
+      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+    }
+    return { text, tailTruncated };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -146,12 +185,14 @@ function parsePlan(raw: Record<string, unknown> | null): SwarmPlan | null {
   return { goalTitle, goalLine, tasks, threads };
 }
 
-function parseBoardMessages(raw: string | null): { messages: SwarmMessage[]; totalMessages: number; truncated: boolean } {
+function parseBoardMessages(
+  raw: { text: string; tailTruncated: boolean } | null,
+): { messages: SwarmMessage[]; totalMessages: number; truncated: boolean } {
   if (!raw) return { messages: [], totalMessages: 0, truncated: false };
   const parsed: SwarmMessage[] = [];
   let fallbackSeq = 0;
 
-  for (const line of raw.split(/\r?\n/)) {
+  for (const line of raw.text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let obj: Record<string, unknown>;
@@ -182,8 +223,8 @@ function parseBoardMessages(raw: string | null): { messages: SwarmMessage[]; tot
   }
 
   const totalMessages = parsed.length;
-  const truncated = totalMessages > MAX_MESSAGES;
-  const messages = truncated ? parsed.slice(-MAX_MESSAGES) : parsed;
+  const truncated = raw.tailTruncated || totalMessages > MAX_MESSAGES;
+  const messages = totalMessages > MAX_MESSAGES ? parsed.slice(-MAX_MESSAGES) : parsed;
   return { messages, totalMessages, truncated };
 }
 
@@ -193,16 +234,17 @@ export function readSwarmBoard(providerThreadId: string, options?: ReadSwarmBoar
     return emptySwarmBoardSnapshot(null);
   }
 
+  const maxBytes = options?.maxFileBytes ?? MAX_JSON_FILE_BYTES;
   const appDataDir = resolveSwarmAppDataDir(options);
   const swarmDir = join(appDataDir, "brain", trimmedId, ".system_generated", "swarm");
   if (!existsSync(swarmDir)) {
     return emptySwarmBoardSnapshot(trimmedId);
   }
 
-  const membersRaw = parseJsonObject(readBoundedText(join(swarmDir, "members.json")));
-  const boardRaw = readBoundedText(join(swarmDir, "board.jsonl"));
-  const swarmRaw = parseJsonObject(readBoundedText(join(swarmDir, "swarm.json")));
-  const planRaw = parseJsonObject(readBoundedText(join(swarmDir, "plan.json")));
+  const membersRaw = parseJsonObject(readBoundedJsonText(join(swarmDir, "members.json"), maxBytes));
+  const boardRaw = readBoundedTailLines(join(swarmDir, "board.jsonl"), maxBytes);
+  const swarmRaw = parseJsonObject(readBoundedJsonText(join(swarmDir, "swarm.json"), maxBytes));
+  const planRaw = parseJsonObject(readBoundedJsonText(join(swarmDir, "plan.json"), maxBytes));
 
   const hasSwarmFiles = membersRaw !== null || boardRaw !== null || swarmRaw !== null;
   if (!hasSwarmFiles) {
