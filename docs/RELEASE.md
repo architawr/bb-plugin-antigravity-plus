@@ -46,7 +46,7 @@ Run these steps locally on a machine with BB and a signed-in `agy` CLI:
    - `/swarm` run: Swarm side-panel tab auto-opens, composer pill toggles it, and swarm timeline cards render cleanly.
    - Provider maintenance (`health`, `usage`, `installation`) and Settings panel.
 4. **Refresh screenshots whenever UI or Settings change:**
-   - Capture at `1440x900` with DPR 2 (`2880x1800`, `>= 1200px` wide, `<= 2 MiB` each) in a clean non-private workspace with the sidebar collapsed.
+   - Capture tightly framed Retina images (`>= 1200px` wide, `<= 2 MiB` each) in a clean non-private workspace with empty margins, sidebars, and floating overlays removed so text stays readable inside BB's compact marketplace drawer.
    - Visually inspect every PNG before committing to confirm zero personal emails, local home paths, tokens, or unrelated thread titles.
    - Re-run `npm run check:release` to verify dimensions, file sizes, and `README.md` + `marketplace-entry.template.json` references.
 5. **Check commit identity and tag immutably:**

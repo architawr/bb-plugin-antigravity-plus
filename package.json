@@ -4,7 +4,19 @@
   "type": "module",
   "license": "MIT",
   "author": "Tim Sherstyuk",
-  "description": "Antigravity CLI provider for BB with persistent native system prompts, tip forking, manual compaction, low-to-max reasoning, a live Swarm board tab, and macOS/Linux/Windows support.",
+  "description": "Turn Antigravity CLI into a native BB provider with persistent instructions, tip forking, manual /compact, low-to-max reasoning, and a live /swarm board.",
+  "homepage": "https://github.com/tymshe/bb-plugin-antigravity-plus#readme",
+  "bugs": {
+    "url": "https://github.com/tymshe/bb-plugin-antigravity-plus/issues"
+  },
+  "keywords": [
+    "bb-plugin",
+    "antigravity",
+    "acp",
+    "gemini",
+    "swarm",
+    "cli"
+  ],
   "files": [
     "server.ts",
     "host.ts",
@@ -40,7 +52,7 @@
   },
   "bb": {
     "name": "Antigravity Provider +",
-    "description": "Run Antigravity CLI in BB with persistent native system prompts, tip forking, manual compaction, low-to-max reasoning, a live Swarm board, and per-session worker isolation.",
+    "description": "Turn Antigravity CLI into a native BB provider with persistent instructions, tip forking, /compact, low-to-max reasoning, and a live /swarm board.",
     "branding": {
       "icon": "./assets/icon.svg"
     },

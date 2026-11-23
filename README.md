@@ -4,7 +4,7 @@
 
 <h1 align="center">Antigravity Provider +</h1>
 
-<p align="center">Run Google Antigravity CLI inside BB with persistent native system prompts, tip forking, manual compaction, full reasoning levels, and a live Swarm board.</p>
+<p align="center">Turn Google Antigravity CLI into a native BB provider with persistent instructions, tip forking, manual compaction, low-to-max reasoning, and a live Swarm board.</p>
 
 <p align="center">
   <a href="#why-use-this-instead-of-bbs-built-in-acp">Why not built-in ACP?</a> &middot;
@@ -15,7 +15,7 @@
   <a href="SECURITY.md">Security</a>
 </p>
 
-BB can talk to `agy acp` through its built-in generic ACP provider, and basic chat works. The cracks show up on real sessions. Thread and skill instructions drop after a reload. You cannot fork a thread or run manual `/compact`. `xhigh` and `max` reasoning are missing. Running `/swarm` prints `Run /swarm board (default shortcut alt+s)`, which does nothing inside BB. Command cards hide Antigravity's descriptions and sandbox-escape flags.
+BB can talk to `agy acp` through its built-in generic ACP provider, and basic chat works. Compared to BB's native Codex and Claude Code providers, the cracks show up on real sessions. Thread and skill instructions drop after a reload. You cannot fork a thread or run manual `/compact`. `xhigh` and `max` reasoning are missing. Running `/swarm` prints `Run /swarm board (default shortcut alt+s)`, which does nothing inside BB. Command cards hide Antigravity's descriptions and sandbox-escape flags.
 
 **Antigravity Provider +** (`antigravity-plus`) closes those gaps by pairing BB's shared ACP bridge with a local Antigravity dialect, an in-process ACP proxy, and a native Swarm panel tab. It uses your existing [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) login with no extra API keys or custom ACP JSON.
 
