@@ -1,31 +1,31 @@
 # Provider capabilities
 
-Verified against Antigravity CLI 1.5.1 and BB SDK 0.6.109 on Windows. A terminal CLI feature does not imply that the same feature is exposed through ACP.
+Verified against Antigravity CLI 1.5.15 on macOS (BB Desktop), 1.5.14 on Linux, and 1.5.1+ on Windows with BB SDK 0.6.157. A terminal CLI feature does not imply that the same feature is exposed through ACP.
 
 | Feature | Current integration |
 | --- | --- |
-| Streaming, tools, approvals | Shared BB ACP bridge + custom `antigravity` ACP dialect |
-| Background commands & agents | Live BB `backgroundTask` composer banner and sidebar indicator for backgrounded `run_command`, `schedule`, and `invoke_subagent` tasks, with settlement via `manage_task`, `manage_subagents`, completion notifications, and transcript tailing |
-| Subagent delegation control | Optional `subagentsDisabled` setting instructs agents to delegate via BB (`bb thread spawn --parent-self`) and blocks native subagent tool approvals |
+| Streaming, tools, approvals | Shared BB ACP bridge + custom `antigravity-plus` ACP dialect + built-in ACP proxy |
+| Native Swarm board tab and pill | Fixed `Swarm` thread side-panel tab (visible only on threads with an active swarm, auto-opened via `autoOpenSwarmBoard`) plus a clickable Swarm context pill above the composer, reading `members.json`, `board.jsonl`, `swarm.json`, and optional `plan.json` read-only over host RPC |
+| Swarm timeline cards | Clean tool cards for `swarm` (`title`, `add`, `kill`, `status`, `models`, `model`), `post_message`, `read_board`, and `swarm_wait` |
+| Native system prompts | Lifted from `<system_instructions>` into `_meta.antigravity.systemPrompt.append` and re-applied on load and resume |
+| Background commands & agents | Live BB `backgroundTask` composer banner and sidebar indicator for backgrounded `run_command`, `schedule`, and `invoke_subagent` tasks, with persisted restart recovery |
+| Subagent delegation control | Optional `subagentsDisabled` setting instructs agents to delegate via BB (`bb thread spawn --parent-self`) and denies native subagent tool approvals |
 | Command & tool presentation | Displays `toolSummary` descriptions (`commandDescriptionsEnabled`), clean command output and exit codes, destructive **Outside of sandbox** badges (`BypassSandbox`), and native delegation cards |
-| Model and reasoning choices | Discovered from CLI; account dependent |
-| BB instructions | Sent as Antigravity's native system prompt (`_meta.antigravity.systemPrompt.append`) by the plugin's ACP proxy, and re-applied when a session is loaded or resumed |
-| Plan/Build | One Mode selector, mapped to native Plan/Accept edits; duplicate Plan action removed |
+| Sandbox-escape guard | `acceptEditsApproval` setting (`ask` default, `auto-in-sandbox`, or `auto-all`) lets you auto-approve routine in-sandbox requests in Accept edits mode while still prompting for **Outside of sandbox** commands |
+| Model catalog and reasoning | Host-scoped model cache (`models.scope: "host"`); supports `low`, `medium`, `high`, `xhigh`, and `max` depending on model and account |
+| Plan/Build | One Mode selector mapped to native Plan/Accept edits with provider-specific `planModeCopy` and no duplicate Plan action |
 | Accept edits / Full access | Shared bridge permission policy |
-| CLI terminal sandbox | Inherits settings; optional request-sandbox flag for new threads |
-| Native skills in BB picker | Declared workspace and personal skill directories |
-| Separate child sessions | Distinct ACP session IDs verified; actual concurrent agent work not tested |
-| Existing session load | Native session/load verified; full BB restart recovery not tested |
-| Session fork | Fork at the latest message: the plugin's ACP proxy advertises session/fork, copies the CLI conversation (database with its ids swapped, `brain/` folder, title) and opens the copy. Needs Node.js with `node:sqlite` |
-| Session rewind / fork at an earlier message | Not supported: BB's ACP bridge forks only at the tip, and the CLI does not expose `/rewind` over ACP |
-| Manual compaction | Supported: BB's Compact action sends `/compact`, which `agy acp` runs as its native compaction command (verified on CLI 1.5.14 by inspecting the compacted conversation; CLI 1.5.1 answered it as conversational text). When the CLI passes `/compact` to the model instead, as it does on a session with no history, the plugin's ACP proxy reports the compaction as failed rather than letting BB show it as done |
-| Subscription quota/usage | Supported via `agy -p "/usage" --output-format json` and `provider-usage.v1` |
-| Native archive/rename | Disabled: bridge does not implement these operations |
+| Per-session worker isolation | Always passes `--process-per-session` to `agy acp` so each thread runs in its own CLI worker process |
+| CLI terminal sandbox | Inherits CLI settings; optional `sandbox` flag adds `--sandbox` for new threads |
+| Profile and proxy env passthrough | Declares `env.passthrough` for `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, and `BB_AGY_ACP_PROXY` and forwards profile flags to `agy acp` |
+| Auth-aware CLI health, install, and update | Implements `provider/health` (version + zero-turn `/usage` auth check guiding to `agy acp --login`), `provider/installation/status`, and `provider/installation/run` (`Install` + `agy update`, minimum `1.5.0`) |
+| Native skills in BB picker | Workspace `.agents/skills` (ancestors) and `.agent/skills`; user `.gemini/antigravity-cli/skills`, `.gemini/antigravity-cli/builtin/skills` (prefixed `antigravity:`), `.gemini/skills`, and `.gemini/config/skills` |
+| Tip fork | Supported (`fork: "tip"`) through the ACP proxy (`VACUUM INTO` + ID swap + `brain/` copy), with automatic pass-through if `agy` advertises native `session/fork` |
+| Manual compaction | Supported via native `/compact` (`agy 1.5.14+`), reporting a failed `compaction_update` if the CLI passes `/compact` to the model instead |
+| Subscription quota/usage | Supported via `agy -p "/usage" --output-format json`, `provider/usage`, and `provider-usage.v1` |
+| Session rewind / message edit | Disabled: `agy acp` does not expose `session/rewind` |
+| Native `ask_question` UI | Disabled: BB's shared ACP bridge does not map `ask_question` tool calls to interactive question cards |
+| Native archive/rename | Disabled: `agy acp` does not expose archive or rename operations |
 | BB Auto permission profile | Unsupported by the shared ACP bridge |
-| Native plugin-provided skills | Not resolved into BB's picker yet |
 
-The sandbox flag may have no effect on an unsupported OS. Full access can approve requests to run outside the sandbox. Native skills are discovered according to the [CLI skill locations](https://antigravity.google/docs/skills); [ACP documentation](https://antigravity.google/docs/ide/extensions/acp/) describes the supported session operations.
-
-Run `node scripts/smoke.mjs --capabilities --features --modes` for a no-prompt protocol check in a temporary workspace. This prints capability flags, verifies separate session IDs, reloads a session, and tests native Plan/Build transitions. It refuses incoming tool requests. It does not test actual parallel model execution or filesystem containment.
-
-The permission picker uses BB's fixed Accept edits / Full access profiles. CLI Default (ask before edits) is not exposed separately. Supporting it as a third BB permission profile requires a BB SDK/core extension; it is not equivalent to Auto.
+Run `node scripts/smoke.mjs --capabilities --features --modes` for a no-prompt protocol check in a temporary workspace. Set `BB_AGY_ACP_PROXY=0` to bypass the ACP proxy for troubleshooting.

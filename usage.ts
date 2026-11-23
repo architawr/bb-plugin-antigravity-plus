@@ -318,7 +318,7 @@ const providerUsageSourceContract = defineRpcContract({
   [LIST_RESOURCES_METHOD]: {
     input: z.object({}),
     output: listResourcesOutputSchema,
-    experimental_description: "Host-local usage inventory owned by the antigravity-cli provider plugin.",
+    experimental_description: "Host-local usage inventory owned by the antigravity-plus provider plugin.",
   },
   [GET_RESOURCE_METHOD]: {
     input: z.object({
@@ -326,7 +326,7 @@ const providerUsageSourceContract = defineRpcContract({
       refresh: z.boolean(),
     }),
     output: getResourceOutputSchema,
-    experimental_description: "Returns actual usage for one listed antigravity-cli host resource.",
+    experimental_description: "Returns actual usage for one listed antigravity-plus host resource.",
   },
 });
 
@@ -466,7 +466,7 @@ export function registerAntigravityUsageSource(bb: BbPluginApi) {
     },
     {
       experimental_discoverable: true,
-      experimental_description: "Host-local usage owned by the antigravity-cli provider plugin. Inventory reads metadata only. Independent of display plugins.",
+      experimental_description: "Host-local usage owned by the antigravity-plus provider plugin. Inventory reads metadata only. Independent of display plugins.",
     },
   );
 }

@@ -1,13 +1,11 @@
 # Security and public-source review
 
-Reviewed the provider declaration, host entry, tests, smoke script, manifest, lockfile, documentation, and generated package inventory.
+Reviewed the provider declaration, host bridge and ACP proxy, Swarm host RPC reader, frontend Swarm tab, tests, smoke script, manifest, lockfile, documentation, screenshots, and generated package inventory for `bb-plugin-antigravity-plus@0.2.0`.
 
-- Plugin-owned runtime code contains no shell execution, HTTP route, credential handling, telemetry collector, credential persistence, or install hook. The shared SDK handles subprocesses and ACP transport.
-- Fixed launch arguments preserve vendor approval checks in Accept edits mode and disable CLI telemetry. No permission bypass flags or arbitrary endpoint overrides are added. Explicitly selecting Full access makes the shared bridge approve permission requests.
-- No account identifiers, personal email addresses, home-directory paths, tokens, CLI state, or session recordings are intentionally bundled in release files. Git commit metadata can separately contain author identities and emails. Background-task state is stored locally and can include private command descriptions and paths; see SECURITY.md. Package contents use an allowlist; dependencies, scratch scaffold, environment files, logs, and local Git metadata are excluded. Published package contents exclude source maps, which can contain local build paths.
-- npm audit reported zero known vulnerabilities at verification time. This is not a guarantee against unknown vulnerabilities or an independent audit of upstream code.
-- MIT applies to this project's original source. The dependency SDK declares MIT; other dependencies and Google's service retain their own terms.
+- Plugin-owned runtime code contains no shell command construction, HTTP route, credential parser, telemetry collector, or install hook. Subprocess execution goes through BB's shared ACP bridge, `experimental_hostToolchain`, or fixed `execFile` arguments (`agy --version`, `agy -p "/usage"`).
+- `readSwarmBoard` validates `providerThreadId` against a strict UUID pattern, performs read-only bounded reads of `.system_generated/swarm/` (capped at 200 recent messages and 8,000 characters per post), and never mutates Antigravity files.
+- Fixed launch arguments preserve vendor approval checks in Accept edits mode, disable CLI telemetry, and isolate each session (`--process-per-session`). `acceptEditsApproval` defaults to `"ask"`, and `"auto-in-sandbox"` keeps out-of-sandbox requests prompting even when routine requests auto-approve. Explicitly selecting Full access or `"auto-all"` allows out-of-sandbox requests to approve automatically.
+- No account identifiers, personal email addresses, home-directory paths, tokens, CLI state, or private conversations are bundled in release files or screenshots. Package contents use an explicit `files` allowlist and exclude `.map` source maps, `.env` files, logs, and local runtime state.
+- MIT applies to this fork's source and upstream `ols-md/bb-plugin-antigravity` source. Dependencies and Google's Antigravity CLI retain their own terms.
 
-Verified on Windows: TypeScript check, launch-policy regression test, BB build and plugin reload, live model/mode discovery, and native ACP initialize/session/new/prompt against the installed signed-in CLI. The prompt returned the requested marker without tool access.
-
-Public source metadata, Git-source installation, and the BB Community marketplace listing (`antigravity-cli`) are published. Linux is validated (agy 1.5.14); macOS validation remains open.
+Verified on macOS (BB Desktop + `agy 1.5.15`), Linux (`agy 1.5.14`), and Windows (`agy 1.5.1+`): TypeScript check (`tsc --noEmit`), 117 passing unit tests, `bb plugin build` (`dist/server.js`, `dist/app.js`, `dist/app.css`, `dist/host.js`), live `npm run smoke -- --modes`, live `provider/health` + `provider/usage` + `provider/installation/*`, and live multi-worker `/swarm` threads in BB.

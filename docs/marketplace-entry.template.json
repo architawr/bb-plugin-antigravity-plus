@@ -1,25 +1,34 @@
 {
-  "id": "antigravity-cli",
-  "displayName": "Antigravity CLI [Experimental]",
-  "description": "Code with your Antigravity account inside BB. Choose CLI-discovered models, switch between Plan and Build, and review tool requests in your thread. Requires a separately installed Antigravity CLI and an eligible account; service quota or charges apply. Tested locally on Windows.",
+  "id": "antigravity-plus",
+  "displayName": "Antigravity Provider +",
+  "description": "Run Antigravity CLI in BB with persistent thread instructions, tip forking, manual compaction, and a live Swarm board. Pick CLI-discovered models with low through max reasoning, isolate each thread in its own worker process, and track per-model quota windows. Built-in health checks verify sign-in and run CLI installs or updates on macOS, Linux, and Windows. Requires Antigravity CLI 1.5.0+ and a signed-in Google account on the host.",
   "icon": {
-    "url": "./icons/antigravity-cli-b61622a0.svg"
+    "url": "./icons/antigravity-plus-be3178dd.svg"
   },
+  "screenshots": [
+    "./screenshots/antigravity-plus/swarm-board.png",
+    "./screenshots/antigravity-plus/model-picker.png",
+    "./screenshots/antigravity-plus/usage.png",
+    "./screenshots/antigravity-plus/settings.png"
+  ],
   "tags": [
     "acp",
+    "antigravity",
     "cli",
-    "planning"
+    "gemini",
+    "planning",
+    "swarm"
   ],
   "category": "agents-and-providers",
   "author": {
-    "name": "dionis-d",
-    "github": "dionis-d"
+    "name": "Tim Sherstyuk",
+    "github": "tymshe"
   },
   "source": {
     "git": {
-      "url": "https://github.com/ols-md/bb-plugin-antigravity.git",
-      "range": "^0.1.0"
+      "url": "https://github.com/tymshe/bb-plugin-antigravity-plus.git",
+      "range": "^0.2.0"
     }
   },
-  "overview": "./overview/antigravity-cli.md"
+  "overview": "./overview/antigravity-plus.md"
 }

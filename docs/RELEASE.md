@@ -1,52 +1,79 @@
-# Publish to the BB Community marketplace
+# Release and CI/CD playbook
 
-The marketplace lists plugin metadata. The source code stays in a public Git repository or npm package. `antigravity-cli` is published in the [BB Community marketplace](https://github.com/get-bb/marketplace); `marketplace-entry.template.json` is the reference entry for marketplace updates.
+This document defines the repeatable validation, release, and marketplace update workflow for **Antigravity Provider +** (`antigravity-plus`). Every check that caught drift during development is automated in `scripts/check-release.mjs` and runs on every PR and push to `main`.
 
-The steps below follow the [Community marketplace contribution instructions](https://github.com/get-bb/marketplace#submit-a-plugin). Recheck them before submitting because the marketplace contract can change independently of BB.
+## 1. Automated CI checks (every PR and push)
 
-## 1. Prepare a public release
+[`.github/workflows/checks.yml`](../.github/workflows/checks.yml) runs two read-only jobs on Ubuntu with Node 24:
 
-Choose the public author name and GitHub account that will own the listing. The current Git remote is `https://github.com/ols-md/bb-plugin-antigravity.git`; verify that it is public and contains the intended release before submitting. Add public repository metadata to `package.json` and use the prepared listing in [marketplace-entry.template.json](marketplace-entry.template.json). Do not put an email address in the author field.
+1. **Typecheck, tests, and release gate:**
+   - `npm ci --ignore-scripts`
+   - `npm run check` (`tsc --noEmit`)
+   - `npm test` (unit tests across proxy, fork, dialect, background tasks, subagents, maintenance, usage, Swarm reader, and provider contract)
+   - `npm run check:release` (`scripts/check-release.mjs`), which enforces:
+     - Runtime setting keys in `server.ts` match `README.md`, `SECURITY.md`, and `skills/antigravity-plus/SKILL.md`, with no retired setting names left behind.
+     - Display name, provider ID, version (`package.json` and `scripts/smoke.mjs`), repository URL, `LICENSE` author, and `assets/icon.svg` SHA-256 hash match `docs/marketplace-entry.template.json`.
+     - `PLUGIN_OVERVIEW.md` stays at or under 4,000 characters, has no `# ` H1 title, no raw HTML, no tables, no images, HTTPS links only, zero em dashes, and zero banned marketplace buzzwords.
+     - Every marketplace screenshot exists in `assets/screenshots/`, is embedded in `README.md`, is at most 2 MiB, and is at least 1200 px wide (with no unreferenced leftover screenshots).
+     - Zero local home paths (`/Users/...`, `/home/...`), personal email addresses, or stale upstream references in tracked files.
+     - `npm pack --dry-run --ignore-scripts` contains all required entrypoints and excludes `.map`, `.env`, and scratch files.
+   - `npm audit --audit-level=low`
+   - `npm pack --dry-run --ignore-scripts`
+2. **Secret scan:**
+   - Pinned Gitleaks binary (`v8.30.1`, SHA-256 verified) scanning full Git history (`--redact`).
 
-Review the exact files and Git history to publish. Build and validate the release:
+## 2. Local pre-release checklist (before tagging `vX.Y.Z`)
 
-```sh
-npm ci --ignore-scripts
-npm run check
-npm test
-npm run build
-npm run smoke -- --modes
-npm pack --dry-run
-```
+Run these steps locally on a machine with BB and a signed-in `agy` CLI:
 
-The optional `npm run smoke -- --prompt` sends a real prompt and can consume quota. Also verify a clean Git-source installation, streaming, cancellation, approval allow/deny, editing, and resumed conversations in BB. Validate macOS/Linux before claiming support there.
+1. **Sync BB SDK types and bump version (when cutting a new release):**
+   ```sh
+   bb plugin types .
+   ```
+   Update `version` in `package.json`, `clientInfo.version` in `scripts/smoke.mjs`, and `range` in `docs/marketplace-entry.template.json` if crossing a major/minor floor.
+2. **Run the full local gate:**
+   ```sh
+   npm run check && npm test && npm run build && npm run check:release && npm run smoke -- --modes
+   ```
+3. **Install locally into BB and verify live surfaces:**
+   ```sh
+   bb plugin install --yes .
+   bb provider models antigravity-plus --json
+   ```
+   Verify in BB Desktop:
+   - Streaming reply, Build/Plan mode toggle, and reasoning levels (`low` through `max`).
+   - Tip fork (`Fork`) and manual `/compact`.
+   - `/swarm` run: Swarm side-panel tab auto-opens, composer pill toggles it, and swarm timeline cards render cleanly.
+   - Provider maintenance (`health`, `usage`, `installation`) and Settings panel.
+4. **Refresh screenshots whenever UI or Settings change:**
+   - Capture at `1440x900` with DPR 2 (`2880x1800`, `>= 1200px` wide, `<= 2 MiB` each) in a clean non-private workspace with the sidebar collapsed.
+   - Visually inspect every PNG before committing to confirm zero personal emails, local home paths, tokens, or unrelated thread titles.
+   - Re-run `npm run check:release` to verify dimensions, file sizes, and `README.md` + `marketplace-entry.template.json` references.
+5. **Check commit identity and tag immutably:**
+   ```sh
+   git var GIT_AUTHOR_IDENT
+   git status -s
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin main --follow-tags
+   ```
+   Never move a published tag. Cut a patch version for follow-up fixes.
 
-Publish the reviewed commit and an immutable `v0.1.1` tag when ready. No npm publication is required for a Git-source listing. Do not move a released tag; use a new version for fixes.
+## 3. Updating the BB Community marketplace
 
-The prepared listing uses `range: "^0.1.0"` so BB can discover compatible updates from future release tags. Do not combine `ref` and `range`.
+Recheck `README.md`, `schema/marketplace-v2.schema.json`, and `marketplace.base.json` on the default branch of [get-bb/marketplace](https://github.com/get-bb/marketplace) before submitting.
 
-## 2. Prepare the marketplace pull request
+A compatible release inside the existing `range` (such as `0.2.1` under `^0.2.0`) needs no marketplace PR unless you changed the display name, description, overview, icon, screenshots, tags, category, ownership, or version range.
 
-Fork [get-bb/marketplace](https://github.com/get-bb/marketplace) and create a contribution branch. Add these files to the fork:
+When a marketplace PR is needed, fork `get-bb/marketplace`, create a branch, and sync only these files:
 
 | Plugin checkout | Marketplace fork |
 | --- | --- |
-| Filled `docs/marketplace-entry.template.json` | `entries/antigravity-cli.json` |
-| `assets/icon.svg` | `icons/antigravity-cli-<hash>.svg` |
-| `PLUGIN_OVERVIEW.md` | `overview/antigravity-cli.md` |
-| Real BB screenshots, if useful | `screenshots/antigravity-cli/` |
+| `docs/marketplace-entry.template.json` | `entries/antigravity-plus.json` |
+| `assets/icon.svg` | `icons/antigravity-plus-<8-char-sha256>.svg` |
+| `PLUGIN_OVERVIEW.md` | `overview/antigravity-plus.md` |
+| `assets/screenshots/*.png` | `screenshots/antigravity-plus/*.png` |
 
-Keep the filename equal to the entry ID. Check `reserved-plugin-ids.json` and existing entries for collisions. `agents-and-providers` is the current category for this plugin. Set `author.github` to the account responsible for later listing changes.
-
-Use the current [v2 entry schema](https://github.com/get-bb/marketplace/blob/main/schema/marketplace-v2.schema.json). Do not edit the generated marketplace documents.
-
-Screenshots may use PNG, JPEG, or WebP, at least 1200 pixels wide and no larger than 2 MiB each, with at most six images. Use a non-private test workspace and omit personal or account data. Reference them with `./screenshots/antigravity-cli/<filename>` in the entry. Icons may be SVG, PNG, or WebP and must be 256 KB or less.
-
-The overview must be UTF-8, at most 4000 characters, and use supported Markdown with absolute HTTPS links. Raw HTML, images, tables, footnotes, and task lists are rejected in marketplace overviews; those restrictions do not apply to the repository README.
-
-## 3. Validate and submit
-
-Inside the marketplace fork, run its documented checks:
+Validate inside the marketplace fork before opening the PR:
 
 ```sh
 npm ci
@@ -56,14 +83,4 @@ npm run gate:v1
 npm run check
 ```
 
-The checks validate metadata and the remote release source. Commit only this plugin's entry and assets, push the contribution branch, and open a pull request against `get-bb/marketplace`.
-
-Marketplace CI and a maintainer review the source and behavior. Merging publishes the listing; users still choose whether to install or update it. A compatible release within a tracking range usually needs no listing PR. Source, branding, ownership, description, screenshot, or pinned-version changes need another PR.
-
-## Current release status
-
-The [public GitHub repository](https://github.com/ols-md/bb-plugin-antigravity) and BB Community marketplace listing (`antigravity-cli`, tracking `^0.1.0`) are live and verified on Windows and Linux. macOS validation remains open.
-
-## Privacy gate
-
-Complete the public contribution and release checks in [SECURITY.md](../SECURITY.md#public-contribution-and-release-checks) before every push and release. CI scans credentials; manually review screenshots, commit metadata, and package contents for personal information. Keep signed-in CLI smoke tests outside public PR automation.
+Commit only this plugin's entry, icon, overview, and screenshots, push your branch, and open the PR from `tymshe`.

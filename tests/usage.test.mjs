@@ -257,7 +257,7 @@ test('registers discoverable provider-usage.v1 RPC handlers and returns host usa
           {
             id: 'antigravity-plus',
             pluginId: 'antigravity-plus',
-            displayName: 'Antigravity Plus',
+            displayName: 'Antigravity Provider +',
           },
         ],
       },

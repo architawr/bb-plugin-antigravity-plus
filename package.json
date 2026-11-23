@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "type": "module",
   "license": "MIT",
-  "author": "tymshe",
-  "description": "First-class Antigravity CLI ACP provider for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, Swarm board tab, and macOS/Linux/Windows support.",
+  "author": "Tim Sherstyuk",
+  "description": "Antigravity CLI provider for BB with persistent native system prompts, tip forking, manual compaction, low-to-max reasoning, a live Swarm board tab, and macOS/Linux/Windows support.",
   "files": [
     "server.ts",
     "host.ts",
@@ -39,8 +39,8 @@
     "node": ">=22"
   },
   "bb": {
-    "name": "Antigravity Plus",
-    "description": "Antigravity CLI for BB with native system prompts, tip forking, manual compaction, xhigh/max reasoning, native Swarm board panel, per-session isolation, and macOS support.",
+    "name": "Antigravity Provider +",
+    "description": "Run Antigravity CLI in BB with persistent native system prompts, tip forking, manual compaction, low-to-max reasoning, a live Swarm board, and per-session worker isolation.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
@@ -54,6 +54,7 @@
   "scripts": {
     "build": "bb plugin build",
     "check": "tsc --noEmit",
+    "check:release": "node --experimental-strip-types scripts/check-release.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   },

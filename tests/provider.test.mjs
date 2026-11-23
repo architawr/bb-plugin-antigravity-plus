@@ -8,16 +8,21 @@ test('registers a native ACP provider without changing credentials or bypassing 
   await plugin({
     settings: {
       define(descriptors) {
-        assert.equal(descriptors.autoApprove.default, false);
-        assert.equal(descriptors.promptOnSandboxEscape.default, true);
-        assert.equal(descriptors.sandbox.default, false);
-        assert.equal(descriptors.processPerSession.default, true);
-        assert.equal(descriptors.subagentsDisabled.default, false);
-        assert.equal(descriptors.commandDescriptionsEnabled.default, true);
+        assert.deepEqual(Object.keys(descriptors), [
+          'autoOpenSwarmBoard',
+          'commandDescriptionsEnabled',
+          'subagentsDisabled',
+          'acceptEditsApproval',
+          'sandbox',
+        ]);
         assert.equal(descriptors.autoOpenSwarmBoard.default, true);
-        assert.equal(descriptors.acpProxy, undefined);
-        assert.equal(descriptors.enabled.default, true);
-        return { get: async () => ({ enabled: true }), onChange() {} };
+        assert.equal(descriptors.commandDescriptionsEnabled.default, true);
+        assert.equal(descriptors.subagentsDisabled.default, false);
+        assert.equal(descriptors.acceptEditsApproval.type, 'select');
+        assert.equal(descriptors.acceptEditsApproval.default, 'ask');
+        assert.deepEqual(descriptors.acceptEditsApproval.options, ['ask', 'auto-in-sandbox', 'auto-all']);
+        assert.equal(descriptors.sandbox.default, false);
+        return { get: async () => ({}), onChange() {} };
       },
     },
     providers: { register(value) { declarations.push(value); return { dispose() {} }; } },
@@ -25,6 +30,7 @@ test('registers a native ACP provider without changing credentials or bypassing 
   assert.equal(declarations.length, 1);
   const provider = declarations[0];
   assert.equal(provider.id, 'antigravity-plus');
+  assert.equal(provider.displayName, 'Antigravity Provider +');
   assert.equal(provider.icon, './assets/provider.svg');
   assert.deepEqual(provider.composerActions, []);
   const spec = experimental_acpLaunchSpecSchema.parse(provider.experimental_bridgeOptions.acpLaunchSpec);
@@ -39,37 +45,43 @@ test('registers a native ACP provider without changing credentials or bypassing 
   assert.equal(provider.experimental_bridgeOptions.acpDialect, 'antigravity-plus');
 });
 
-
-test('sandbox and processPerSession only change fixed CLI arguments', async () => {
+test('deriveProviderOptions always isolates sessions and maps approval and sandbox settings cleanly', async () => {
   let provider;
   await plugin({
-    settings: { define() { return { get: async () => ({ enabled: true }), onChange() {} }; } },
+    settings: { define() { return { get: async () => ({}), onChange() {} }; } },
     providers: { register(value) { provider = value; return { dispose() {} }; } },
   });
   for (const sandbox of [undefined, false, true, 'true']) {
-    for (const processPerSession of [undefined, true, false]) {
-      const options = provider.deriveProviderOptions({ settings: { sandbox, processPerSession } });
-      const spec = experimental_acpLaunchSpecSchema.parse(options.acpLaunchSpec);
-      assert.deepEqual(spec.args, [
-        'acp',
-        '--disable-telemetry',
-        ...(processPerSession !== false ? ['--process-per-session'] : []),
-        ...(sandbox === true ? ['--sandbox'] : []),
-      ]);
-      assert.equal(spec.command, 'agy');
-      assert.deepEqual(spec.env, {});
-      assert.equal(options.acpDialect, 'antigravity-plus');
-    }
+    const options = provider.deriveProviderOptions({ settings: { sandbox } });
+    const spec = experimental_acpLaunchSpecSchema.parse(options.acpLaunchSpec);
+    assert.deepEqual(spec.args, [
+      'acp',
+      '--disable-telemetry',
+      '--process-per-session',
+      ...(sandbox === true ? ['--sandbox'] : []),
+    ]);
+    assert.equal(spec.command, 'agy');
+    assert.deepEqual(spec.env, {});
+    assert.equal(options.acpDialect, 'antigravity-plus');
   }
-  for (const autoApprove of [undefined, false, true, 'true']) {
-    assert.equal(provider.deriveProviderOptions({ settings: { autoApprove } }).autoApprove, autoApprove === true);
-  }
-  for (const promptOnSandboxEscape of [undefined, false, true]) {
-    assert.equal(
-      provider.deriveProviderOptions({ settings: { promptOnSandboxEscape } }).promptOnSandboxEscape,
-      promptOnSandboxEscape !== false
-    );
-  }
+
+  // acceptEditsApproval select mapping
+  const askDefault = provider.deriveProviderOptions({ settings: {} });
+  assert.equal(askDefault.autoApprove, false);
+  assert.equal(askDefault.promptOnSandboxEscape, true);
+
+  const askExplicit = provider.deriveProviderOptions({ settings: { acceptEditsApproval: 'ask' } });
+  assert.equal(askExplicit.autoApprove, false);
+  assert.equal(askExplicit.promptOnSandboxEscape, true);
+
+  const inSandbox = provider.deriveProviderOptions({ settings: { acceptEditsApproval: 'auto-in-sandbox' } });
+  assert.equal(inSandbox.autoApprove, true);
+  assert.equal(inSandbox.promptOnSandboxEscape, true);
+
+  const autoAll = provider.deriveProviderOptions({ settings: { acceptEditsApproval: 'auto-all' } });
+  assert.equal(autoAll.autoApprove, true);
+  assert.equal(autoAll.promptOnSandboxEscape, false);
+
   for (const subagentsDisabled of [undefined, false, true, 'true']) {
     assert.equal(
       provider.deriveProviderOptions({ settings: { subagentsDisabled } }).providerSubagentsEnabled,

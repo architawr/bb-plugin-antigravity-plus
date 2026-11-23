@@ -9,7 +9,7 @@ const PROVIDER_ID = "antigravity-plus";
 const MAX_THREAD_IDENTITY_CACHE = 256;
 
 const launchSpec = {
-  displayName: "Antigravity Plus",
+  displayName: "Antigravity Provider +",
   command: "agy",
   args: ["acp", "--disable-telemetry"],
   env: {},
@@ -131,59 +131,47 @@ export default async function antigravity(bb: BbPluginApi) {
     });
   }
 
-  const settings = bb.settings.define({
-    autoApprove: {
+  bb.settings.define({
+    autoOpenSwarmBoard: {
       type: "boolean",
-      label: "Automatically approve ACP permission requests",
-      description: "Automatically answer Antigravity permission requests in Accept edits mode. Applies to new turns.",
-      default: false,
-    },
-    promptOnSandboxEscape: {
-      type: "boolean",
-      label: "Prompt on sandbox escapes when auto-approving",
-      description: "When automatic approval is enabled in Accept edits mode, still ask for confirmation if a command requests execution outside the CLI sandbox.",
+      label: "Auto-open the Swarm tab when a swarm starts",
+      description: "Open the Swarm side-panel tab once when /swarm starts on a thread. Does not reopen if you close it or revisit older threads.",
       default: true,
     },
-    sandbox: {
+    commandDescriptionsEnabled: {
       type: "boolean",
-      label: "Request CLI terminal sandbox",
-      description: "Add --sandbox for new threads. Otherwise use CLI settings. Requires a supported OS; the CLI may fall back to approval prompts. Full access can approve requests outside the sandbox.",
-      default: false,
-    },
-    processPerSession: {
-      type: "boolean",
-      label: "Isolate each thread in its own worker process",
-      description: "Add --process-per-session so each Antigravity thread runs in its own CLI worker process.",
+      label: "Show plain-English command summaries",
+      description: "Use Antigravity's short description as each command card's title and show the raw shell command underneath.",
       default: true,
     },
     subagentsDisabled: {
       type: "boolean",
-      label: "Disable provider subagents",
-      description: "Prevent Antigravity CLI from using its native subagent tools so agents use bb for delegation.",
+      label: "Use BB child threads instead of CLI subagents",
+      description: "Disable Antigravity's built-in subagent tools so agents delegate through visible BB child threads instead. Does not affect /swarm.",
       default: false,
     },
-    commandDescriptionsEnabled: {
-      type: "boolean",
-      label: "Show command descriptions",
-      description: "Display Antigravity tool summaries on command execution cards.",
-      default: true,
+    acceptEditsApproval: {
+      type: "select",
+      label: "Accept edits approval policy",
+      description: "Choose how Antigravity tool and command prompts are handled on new turns in Accept edits mode. Full access always approves all requests.",
+      options: ["ask", "auto-in-sandbox", "auto-all"],
+      experimental_optionLabels: {
+        ask: "Ask for each request",
+        "auto-in-sandbox": "Auto-approve in sandbox, ask on escape",
+        "auto-all": "Auto-approve all requests",
+      },
+      default: "ask",
     },
-    autoOpenSwarmBoard: {
+    sandbox: {
       type: "boolean",
-      label: "Automatically open Swarm board",
-      description: "Open the Swarm tab in the thread side panel automatically when an Antigravity swarm starts.",
-      default: true,
-    },
-    enabled: {
-      type: "boolean",
-      label: "Enable Antigravity Plus",
-      description: "Show Antigravity Plus in the provider picker. Existing running turns are not stopped.",
-      default: true,
+      label: "Force CLI terminal sandbox on new threads",
+      description: "Pass --sandbox to agy on new threads instead of inheriting your CLI default. Requires a supported OS; Full access can still approve commands outside the sandbox.",
+      default: false,
     },
   });
-  const register = () => bb.providers.register({
+  bb.providers.register({
     id: PROVIDER_ID,
-    displayName: "Antigravity Plus",
+    displayName: "Antigravity Provider +",
     icon: "./assets/provider.svg",
     family: "antigravity",
     strings: {
@@ -197,9 +185,12 @@ export default async function antigravity(bb: BbPluginApi) {
       acpDialect: ANTIGRAVITY_ACP_DIALECT_ID,
     },
     deriveProviderOptions({ settings }) {
+      const approval = settings.acceptEditsApproval;
+      const autoApprove = approval === "auto-in-sandbox" || approval === "auto-all";
+      const promptOnSandboxEscape = approval !== "auto-all";
       return {
-        autoApprove: settings.autoApprove === true,
-        promptOnSandboxEscape: settings.promptOnSandboxEscape !== false,
+        autoApprove,
+        promptOnSandboxEscape,
         providerSubagentsEnabled: settings.subagentsDisabled !== true,
         commandDescriptionsEnabled: settings.commandDescriptionsEnabled !== false,
         acpDialect: ANTIGRAVITY_ACP_DIALECT_ID,
@@ -207,7 +198,7 @@ export default async function antigravity(bb: BbPluginApi) {
           ...launchSpec,
           args: [
             ...launchSpec.args,
-            ...(settings.processPerSession !== false ? ["--process-per-session"] : []),
+            "--process-per-session",
             ...(settings.sandbox === true ? ["--sandbox"] : []),
           ],
         },
@@ -246,11 +237,5 @@ export default async function antigravity(bb: BbPluginApi) {
         "BB_AGY_ACP_PROXY",
       ],
     },
-  });
-  let registration = (await settings.get()).enabled ? register() : undefined;
-  settings.onChange(({ enabled }) => {
-    if (Boolean(registration) === enabled) return;
-    registration?.dispose();
-    registration = enabled ? register() : undefined;
   });
 }

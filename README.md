@@ -1,190 +1,185 @@
 <p align="center">
-  <img src="assets/icon.svg" width="72" height="72" alt="Antigravity plugin icon">
+  <img src="assets/icon.svg" width="72" height="72" alt="Antigravity Provider + icon">
 </p>
 
-<h1 align="center">Antigravity CLI for BB</h1>
+<h1 align="center">Antigravity Provider +</h1>
 
-<p align="center">Use your Antigravity CLI account to code in BB.</p>
+<p align="center">Run Google Antigravity CLI inside BB with persistent native system prompts, tip forking, manual compaction, full reasoning levels, and a live Swarm board.</p>
 
 <p align="center">
+  <a href="#why-use-this-instead-of-bbs-built-in-acp">Why not built-in ACP?</a> &middot;
+  <a href="#what-you-get">What you get</a> &middot;
   <a href="#getting-started">Getting started</a> &middot;
-  <a href="#modes-and-permissions">Modes & permissions</a> &middot;
-  <a href="SECURITY.md">Security</a> &middot;
-  <a href="docs/RELEASE.md">Marketplace submission</a>
+  <a href="#modes-permissions-and-settings">Settings</a> &middot;
+  <a href="docs/FEATURES.md">Capabilities</a> &middot;
+  <a href="SECURITY.md">Security</a>
 </p>
 
-An experimental community provider that connects [BB](https://getbb.app) to the [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli). Keep your existing CLI sign-in, choose available models, and work with streamed responses and tool approvals inside BB.
+BB can talk to `agy acp` through its built-in generic ACP provider, and basic chat works. The cracks show up on real sessions. Thread and skill instructions drop after a reload. You cannot fork a thread or run manual `/compact`. `xhigh` and `max` reasoning are missing. Running `/swarm` prints `Run /swarm board (default shortcut alt+s)`, which does nothing inside BB. Command cards hide Antigravity's descriptions and sandbox-escape flags.
 
-**Status:** available in the BB Community marketplace and tested on Windows and Linux. macOS still needs validation.
+**Antigravity Provider +** (`antigravity-plus`) closes those gaps by pairing BB's shared ACP bridge with a local Antigravity dialect, an in-process ACP proxy, and a native Swarm panel tab. It uses your existing [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) login with no extra API keys or custom ACP JSON.
+
+Verified on macOS (BB Desktop + `agy 1.5.15`), Linux (`agy 1.5.14`), and Windows (`agy 1.5.1+`).
+
+## Why use this instead of BB's built-in ACP
+
+| Daily workflow in BB | Built-in generic ACP (`provider-acp`) | Antigravity Provider + (`antigravity-plus`) |
+| --- | --- | --- |
+| Thread and skill instructions across restarts | Sent once in the first user prompt and lost on reload | Lifted into `_meta.antigravity.systemPrompt.append` and re-applied on every load and resume |
+| Running `/swarm` in a thread | Raw `Ran swarm` cards and a dead `alt+s` terminal hint | Live **Swarm** side-panel tab (auto-opens on start), clickable composer pill, roster filters, `plan.json` overview, and readable swarm tool cards |
+| Forking a thread | Unavailable | Tip forking (`fork: "tip"`) via `VACUUM INTO` + ID rewrite, with automatic pass-through if `agy` adds native `session/fork` |
+| Compacting a long thread | Unavailable | Native `/compact` (`agy 1.5.14+`) wired to BB's Compact action, reporting a failure if the CLI sends `/compact` to the model instead |
+| Reasoning levels | Coarse subset only | Full per-model ladder (`low`, `medium`, `high`, `xhigh`, `max`) |
+| Work modes | Duplicate Plan triggers or raw ACP modes | Single **Build** / **Plan** mode selector mapped cleanly to native modes |
+| Command cards and sandbox safety | Raw shell strings, noisy timestamps, no escape guard | `toolSummary` titles, clean output + exit codes, **Outside of sandbox** badges, and sandbox-escape guard in Accept edits mode |
+| Background commands and subagents | Silent until completion | Live BB background task banner with restart recovery, plus optional `subagentsDisabled` toggle to delegate via BB child threads |
+| Session stability and model loading | Shared CLI worker, per-workspace catalog probe | `--process-per-session` enabled by default, host-scoped model cache, and macOS BB Desktop `ELECTRON_RUN_AS_NODE=1` fix |
+| Onboarding, skills, and quota | Manual setup and manual CLI checks | Auth-aware health check (`agy acp --login`), one-click Install / Update, `antigravity:` builtin skills in BB's picker, and per-model quota windows |
+
+## Screenshots
+
+### Live Swarm board and composer pill
+
+![Swarm board tab and composer pill in BB](assets/screenshots/swarm-board.png)
+
+### Live CLI models and Low-to-Extra/Max reasoning picker
+
+![Antigravity Provider + model and reasoning picker in BB](assets/screenshots/model-picker.png)
+
+### Per-model-group quota tracking
+
+![Antigravity Provider + usage windows in BB](assets/screenshots/usage.png)
+
+### Plain-English plugin settings
+
+![Antigravity Provider + settings in BB](assets/screenshots/settings.png)
 
 ## What you get
 
-- **One provider in BB:** select Antigravity CLI when creating a thread.
-- **Live model discovery:** models and reasoning options come from your CLI and account.
-- **Plan and Build:** plan a task, then switch back to implementation.
-- **Permission controls:** choose Accept edits or Full access.
-- **Background task & agent indicators:** see live composer and sidebar indicators when `run_command`, `schedule`, or native subagents run in the background.
-- **BB agent delegation toggle:** optionally disable native Antigravity subagents so agents delegate work using BB threads (`bb thread spawn --parent-self`).
-- **Rich Antigravity tool cards:** view command summaries (`toolSummary`), clean command output with exit codes, destructive **Outside of sandbox** badges when `BypassSandbox` is used, and native subagent delegation cards.
-- **Native skills:** discover your workspace and personal Antigravity skills in BB.
-- **Usage & quota limits:** view per-model-group quota windows (`Gemini`, `Claude/GPT`, `Argon`) in BB's sidebar and usage settings.
-- **CLI sandbox setting:** request the CLI terminal sandbox for new threads.
-- **Fork threads:** fork an Antigravity thread at its latest message; the new thread continues from a copy of the CLI conversation.
-- **Native system prompt:** BB's thread and skill instructions reach Antigravity as its system prompt and stay in effect after a thread is reopened.
-- **A settings toggle:** show or hide the provider without editing configuration files.
+### Keep thread and skill instructions across reloads
 
-## Preview
+Antigravity's ACP endpoint supports native system prompt appending, which generic ACP does not use. The plugin's local ACP proxy extracts BB's `<system_instructions>` block, sends it through `_meta.antigravity.systemPrompt.append`, stores it per session, and re-applies it whenever BB loads or resumes that thread.
 
-<p align="center">
-  <img src="assets/screenshots/model-picker.png" width="281" alt="Antigravity model picker in BB, showing available models and Low, Medium, and High reasoning choices">
-</p>
+### Inspect `/swarm` runs natively inside BB
 
-Choose a model and reasoning level from BB's conversation picker. Available models and options depend on your CLI version and account.
+In the terminal CLI, `/swarm` tells you to press `alt+s` to open the board. Inside BB, Antigravity Provider + turns that into native UI:
 
-<p align="center">
-  <img src="assets/screenshots/usage.png" width="380" alt="Antigravity CLI quota and usage windows in BB's sidebar usage panel">
-</p>
+- **Swarm side-panel tab.** Appears only on threads that have an active swarm and opens automatically when a swarm starts (`autoOpenSwarmBoard`, on by default). Displays the swarm title, optional coordinator `plan.json` overview, clickable member roster with per-worker models and status, oldest/newest sort, and Markdown board posts with `brief`, `done`, and `blocked` badges.
+- **Swarm composer pill.** Shows `<title> · N active · M posts` above the composer so you can toggle the Swarm tab back open in one click if you switched to Diff or Terminal.
+- **Readable swarm timeline cards.** Classifies `swarm` (`title`, `add`, `kill`, `status`, `models`, `model`), `post_message`, `read_board`, and `swarm_wait` instead of showing generic `Ran swarm` rows.
+- **Works on remote hosts.** Reads `<appData>/brain/<conversationId>/.system_generated/swarm/` read-only over BB's host RPC, so it works on both local and enrolled remote machines without mutating `agy` files.
 
-Check your remaining quota per model group (`Gemini 7d`, `Gemini 5h`, `Claude/GPT 7d`, `Claude/GPT 5h`, `Argon 7d`) and reset countdowns in BB's sidebar usage popover or **Settings -> Usage limits**.
+### Fork at the tip and run manual `/compact`
+
+`fork: "tip"` lets you branch any Antigravity thread at its latest message by taking a consistent SQLite snapshot (`VACUUM INTO`), rewriting the conversation and trajectory UUIDs, and copying the session's `brain/` folder. If a future `agy` release advertises native `session/fork`, the proxy passes through automatically.
+
+Manual compaction wires BB's Compact button and `bb thread compact` to Antigravity's native `/compact` (`agy 1.5.14+`) and surfaces a real failure state if the CLI treats `/compact` as ordinary chat text.
+
+### Control models, reasoning, isolation, and sandbox escapes
+
+- **Full reasoning ladder and host-level catalog.** Discovers live models (`Gemini`, `Claude`, `GPT-OSS`) once per host (`models.scope: "host"`) and exposes `low`, `medium`, `high`, `xhigh`, and `max` efforts per model.
+- **One worker process per thread.** Passes `--process-per-session` automatically so one stalled thread does not block other Antigravity sessions.
+- **Sandbox-escape guard.** In Accept edits mode, set `acceptEditsApproval` to **Auto-approve in sandbox, ask on escape** to auto-approve routine in-sandbox commands while still pausing for confirmation when a command requests `BypassSandbox`.
+- **Clean command cards and background banners.** Shows Antigravity's `toolSummary` as the command card title, strips wrapper timestamps, extracts exit codes, marks out-of-sandbox calls with a destructive **Outside of sandbox** badge, and tracks backgrounded commands, timers, and subagents in BB's background task banner across restarts.
+- **Optional BB-thread delegation.** Turning on `subagentsDisabled` instructs Antigravity to spawn BB child threads (`bb thread spawn --parent-self`) instead of native subagents and denies native subagent tool approvals.
+
+### Clear onboarding, builtin skills, and quota windows
+
+- **Auth-aware health, install, and update.** Provider health checks detect missing `agy`, flag versions below `1.5.0`, verify sign-in via a zero-turn `/usage` probe without spending tokens, direct signed-out users to `agy acp --login`, and wire BB's native **Install** and **Update** (`agy update`) actions.
+- **Distinguished builtin skills.** Indexes `.gemini/antigravity-cli/builtin/skills` with the `antigravity:` prefix so builtin Antigravity skills stand apart from your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`) and workspace (`.agents/skills`, `.agent/skills`) skills in BB's picker.
+- **Per-model-group quota tracking.** Reports 5-hour and 7-day usage windows (`Gemini`, `Claude/GPT`, `Argon`) to BB's Usage dashboard and settings through `provider/usage` and `provider-usage.v1`.
+- **Profile isolation.** Passes `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, and `BB_AGY_ACP_PROXY` through `env.passthrough` and forwards profile paths to `agy acp` as `--gemini-dir` and `--app-data-dir`.
 
 ## Getting started
 
 ### 1. Prepare the agent host
 
-You need BB 0.48+, Node.js 22+, and a separately installed Antigravity CLI 1.5.0 or later (verified with 1.5.14; run `agy update` to upgrade) with an eligible account. The Antigravity desktop application alone is insufficient. Your provider's quota and charges still apply.
+You need BB 0.48+, Node.js 22+, and Antigravity CLI `1.5.0` or later (`1.5.14+` recommended for manual `/compact`) installed on the machine where threads run.
 
-Run these commands on the machine where the agent will execute:
+Verify your CLI and sign in:
 
 ```sh
 agy --version
 agy acp --help
-```
-
-Sign in if needed:
-
-```sh
 agy acp --login
 ```
 
-The plugin checks `PATH`, then the standard CLI installer location on the agent host (`%LOCALAPPDATA%\agy\bin\agy.exe` on Windows or `~/.local/bin/agy` on macOS/Linux). Remote agent hosts need their own CLI installation and sign-in.
+If `agy` is not installed yet, click **Install** in BB's provider panel or run the official installer directly:
 
-If PowerShell reports **`agy` is not recognized**, check the default installation:
+- **macOS / Linux:** `curl -fsSL https://antigravity.google/cli/install.sh | bash`
+- **Windows (PowerShell):** `irm https://antigravity.google/cli/install.ps1 | iex`
 
-```powershell
-Test-Path "$env:LOCALAPPDATA\agy\bin\agy.exe"
-```
-
-If it returns `False`, install the standalone CLI using the [official installation instructions](https://antigravity.google/docs/getting-started?tab=cli):
-
-```powershell
-irm https://antigravity.google/cli/install.ps1 | iex
-```
-
-If it returns `True`, add its directory to the current terminal's PATH and verify:
-
-```powershell
-$env:Path += ";$env:LOCALAPPDATA\agy\bin"
-agy --version
-agy acp --login
-```
-
-For future terminals, add `%LOCALAPPDATA%\agy\bin` to your user **Path** in Windows Environment Variables, then reopen PowerShell and restart BB. The plugin fallback also works without this PATH change.
+The plugin checks `PATH` first and then the default CLI location (`~/.local/bin/agy` on macOS and Linux, `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows). Remote agent hosts need their own `agy` install and login.
 
 ### 2. Install the plugin
 
-Install from the BB Community marketplace:
+From the BB Community marketplace:
 
 ```sh
-bb plugin install antigravity-cli
+bb plugin install antigravity-plus
 ```
 
-Alternatively, install **Antigravity CLI** from **Settings -> Plugins** in BB, or install directly from the [GitHub repository](https://github.com/ols-md/bb-plugin-antigravity):
+Or directly from GitHub:
 
 ```sh
-bb plugin install https://github.com/ols-md/bb-plugin-antigravity
+bb plugin install https://github.com/tymshe/bb-plugin-antigravity-plus
 ```
 
-To install from a local checkout, run inside the plugin directory:
-
-```sh
-npm ci --ignore-scripts
-bb plugin install .
-```
-
-Review and accept BB's installation prompt. Plugins run with full trust. The GitHub URL tracks the default branch. Release and marketplace information is documented in [docs/RELEASE.md](docs/RELEASE.md).
+Review and accept BB's installation prompt. BB plugins run with full trust.
 
 ### 3. Start a thread
 
-Select **Antigravity CLI** in BB's provider picker, choose a model, and send a prompt. The CLI supplies the available models; availability depends on your account and installed version.
+Select **Antigravity Provider +** (`antigravity-plus`) in BB's provider picker, pick a model and reasoning effort, and send a prompt. Start a prompt with `/swarm` to launch a multi-agent swarm and inspect it live in the **Swarm** side panel tab.
+
+## Modes, permissions, and settings
+
+Work mode and permission mode are independent controls:
+
+| Control | Choice | Behavior |
+| --- | --- | --- |
+| Work mode | **Build** (default) | Implements the task under native Accept edits behavior and your chosen BB permission mode. |
+| Work mode | **Plan** | Selects Antigravity's native Plan mode to research and outline before editing. Plan is agent behavior, not enforced read-only access. |
+| Permissions | **Accept edits** | Workspace edits run with native Accept edits behavior. Other ACP prompts follow your `acceptEditsApproval` setting. |
+| Permissions | **Full access** | BB's shared ACP bridge auto-approves every ACP permission request, including requests to run outside the CLI sandbox. |
+
+Configure plugin settings under **Settings -> Installed plugins -> Antigravity Provider +**:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `autoOpenSwarmBoard` | `true` | Opens the **Swarm** tab in the thread side panel once when `/swarm` starts on a thread. |
+| `commandDescriptionsEnabled` | `true` | Shows Antigravity's `toolSummary` as the command card title with the raw shell command underneath. |
+| `subagentsDisabled` | `false` | Disables Antigravity's built-in subagent tools so agents delegate via visible BB child threads instead. Does not affect `/swarm`. |
+| `acceptEditsApproval` | `"ask"` | Controls Accept edits approval prompts on new turns: `ask` (ask for each request), `auto-in-sandbox` (auto-approve in sandbox, still ask on sandbox escape), or `auto-all` (auto-approve all requests). |
+| `sandbox` | `false` | Passes `--sandbox` on new threads instead of inheriting your CLI default. |
 
 ## How it works
 
 ```text
-Your BB thread -> Plugin -> BB's shared ACP bridge -> agy acp -> Antigravity service
+BB thread -> Antigravity Provider + host -> BB shared ACP bridge -> ACP proxy -> agy acp
+                                         \-> Host RPC (readSwarmBoard) -> Swarm panel tab & composer pill
 ```
 
-The plugin starts `agy acp --disable-telemetry` on the agent host. BB's shared [Agent Client Protocol (ACP)](https://agentclientprotocol.com) bridge handles streamed messages, tool updates, approval requests, and session communication. A small adapter exposes the CLI's work mode as Build or Plan in BB.
+The ACP proxy runs inside the plugin's own host module (`ELECTRON_RUN_AS_NODE=1` on Electron hosts). Set `BB_AGY_ACP_PROXY=0` in the host environment (`bb machine env`) to bypass the proxy for troubleshooting. Bypassing the proxy disables native system-prompt lifting, tip forking, and `/compact` failure detection while leaving ordinary ACP chat working.
 
-Authentication stays with the CLI. You do not enter an API key into the plugin or maintain custom-agent JSON.
+## Known limits and troubleshooting
 
-## Modes and permissions
+See [docs/FEATURES.md](docs/FEATURES.md) for the complete capability table.
 
-Planning and permissions are separate controls:
-
-| Control | Choice | Behavior |
-| --- | --- | --- |
-| Work mode | Plan | Selects the CLI's native Plan mode. Use it to research and outline a task. |
-| Work mode | Build | Implement the task using native Accept edits behavior and the selected BB permission policy. |
-| Permissions | Accept edits | Uses native Accept edits behavior; remaining ACP approval requests are presented in BB unless automatic approval is enabled. |
-| Permissions | Full access | BB's shared bridge automatically approves ACP permission requests. |
-
-Choose **Build** or **Plan** in the **Mode** selector. Build is the default. The CLI's combined Default / Accept edits / Plan selector is replaced by these two work modes, so editing permissions are no longer repeated there. The separate Plan action is removed. BB's Auto permission mode is unsupported by the shared ACP bridge.
-
-### Terminal sandbox
-
-The plugin inherits the CLI's sandbox settings; it does not add `--sandbox` or force sandboxing off. Antigravity supports an OS-level terminal sandbox on supported systems. Its availability and boundaries depend on your OS, CLI version, and configuration. See [Antigravity's sandbox documentation](https://antigravity.google/docs/sandbox/?tab=cli).
-
-**Full access does not guarantee sandbox containment.** Even with the CLI sandbox enabled, a command can request execution outside it. Full access automatically approves ACP permission requests, potentially including those escape requests. Use Accept edits with automatic approval off to retain review of requests forwarded to BB.
-
-Plan is agent behavior, not enforced read-only access. Permission approvals and terminal sandboxing are distinct protections.
-
-## Settings
-
-Open **Settings -> Installed plugins -> Antigravity CLI** and use **Enable Antigravity CLI** to show or hide the provider. Changes apply immediately. Hiding the provider does not stop a running turn. BB's standard installed-plugin switch disables the entire plugin.
-
-The **Request CLI terminal sandbox** setting adds `--sandbox` for new threads. Off means inherit CLI settings, not force sandboxing off. Availability depends on the host OS.
-
-**Automatically approve ACP permission requests** is off by default. When enabled, the plugin answers Antigravity ACP permission requests automatically in Accept edits mode, including commands requesting execution outside the CLI sandbox. It takes effect on new turns, keeps the selected BB permission mode and direct ACP filesystem restrictions, and does not override a host policy that denies permission escalation. Requests without an allow option and other interactions continue to BB. Full access already auto-approves these requests.
-
-**Disable provider subagents** is off by default. When enabled, the plugin instructs Antigravity CLI not to use its native subagent tools (`invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`) so agents delegate work through BB threads (`bb thread spawn --parent-self`), and automatically denies native subagent approval prompts (taking precedence over automatic approval).
-
-**Show command descriptions** is on by default. When enabled, command execution cards display Antigravity's `toolSummary` as the title with the raw command line as the subtitle, along with an **Outside of sandbox** badge whenever `BypassSandbox` is requested.
-
-The plugin stores these boolean preferences. BB and the CLI can retain their normal conversations and diagnostics. Prompts, workspace context, and tool results are processed by Antigravity and its service. Disabling CLI telemetry does not disable service processing or conversation storage. Read [SECURITY.md](SECURITY.md) for the trust and privacy details.
-
-## Limitations
-
-See the [capability comparison](docs/FEATURES.md) for verified features and remaining gaps.
-
-Automatic CLI installation, forking from an earlier message, and native thread archive/rename synchronization are not advertised. Forking a thread at its latest message works through the plugin's ACP proxy. Manual compaction uses the CLI's native `/compact` and needs a recent CLI (verified on 1.5.14). The plugin depends on your installed CLI and the shared BB ACP bridge.
-
-## Troubleshooting
+- **Mid-thread rewind and message editing** are disabled because `agy acp` does not expose `session/rewind`.
+- **Interactive `ask_question` cards** are not yet bridged by BB's shared ACP bridge.
+- **Swarm worker permissions in Accept edits mode.** Workers run inside the thread's active workspace. If a worker tries to read or write files outside the workspace in Accept edits mode, its approval prompt cannot route through the coordinator's ACP channel and will time out after 60 seconds. Keep worker targets inside the workspace or run the thread in Full access mode.
+- **BB `Auto` permission mode**, service tiers, and native thread archive/rename sync are not supported.
+- **Side-by-side coexistence.** This plugin registers under `antigravity-plus` with its own dialect ID and state directory (`~/.bb/plugin-data/bb-plugin-antigravity-plus`), so it does not collide with `antigravity-cli`. Existing `antigravity-cli` threads stay bound to their original provider ID.
 
 | Problem | What to check |
 | --- | --- |
-| Antigravity is missing | Enable the installed plugin and its **Enable Antigravity CLI** setting. |
-| `agy` cannot be found | Follow the PowerShell recovery steps above. Install the standalone CLI on the agent host; the plugin also checks its standard install location. |
-| Sign-in is required or expired | Run `agy acp --login` on the agent host, then retry. |
-| ACP is unavailable | Update the CLI and confirm `agy acp --help` works. |
-| Model list is empty | Check CLI sign-in, connectivity, and account eligibility, then refresh providers. |
-| Commands run without asking | Check BB's permission selection and the CLI's own permission rules. Full access auto-approves ACP requests. |
-| A session misbehaves only in BB (lost instructions, failed forks) | New sessions run through a small ACP proxy built into the plugin; it gives BB's instructions to Antigravity as its system prompt, re-applies them when a thread is reopened, and implements forking. To rule it out, run `printf 0 \| bb machine env set BB_AGY_ACP_PROXY` and start a new thread; BB then talks to `agy acp` directly, without forking. `bb machine env unset BB_AGY_ACP_PROXY` restores it. |
-
-When reporting an issue, include BB/CLI versions and a short reproduction. Remove tokens, account details, private paths, and conversation content from logs.
+| `agy` is missing or older than `1.5.0` | Click **Install** or **Update** in BB's provider panel, or run `agy update` on the host. |
+| Sign-in missing or expired | Run `agy acp --login` on the agent host, then retry. |
+| Need to isolate proxy behavior | Set `BB_AGY_ACP_PROXY=0` to connect directly to `agy acp` and compare. |
 
 ## Development
 
-The test runner requires Node.js 22.18+ or Node.js 24. The SDK dependency is pinned to 0.6.109.
+Requires Node.js 22.18+ or Node.js 24.
 
 ```sh
 npm ci --ignore-scripts
@@ -192,24 +187,14 @@ npm run check
 npm test
 npm run build
 npm run smoke -- --modes
+npm pack --dry-run --ignore-scripts
 ```
 
-The smoke check creates a real CLI session in a temporary workspace and verifies native Plan/Build transitions without sending a prompt. It refuses incoming tool requests. To send a small test prompt using your account (which can consume quota):
+## Credits and license
 
-```sh
-npm run smoke -- --prompt
-```
+Licensed under the [MIT License](LICENSE). Independent of Google and BB.
 
-See [review notes](docs/REVIEW.md) and the [release checklist](docs/RELEASE.md) before publishing. Published npm packages exclude source maps because they can contain local build paths.
+Community fork of [ols-md/bb-plugin-antigravity](https://github.com/ols-md/bb-plugin-antigravity) by `dionis-d`, incorporating upstream community contributions from:
 
-## License
-
-[MIT](LICENSE). This project is independent of Google and BB. Their products, services, and dependencies retain their own terms.
-
-The plugin and provider ID is `antigravity-cli`. This is a separate community integration from the marketplace plugin named `antigravity`. Local installations using the earlier ID need to be reinstalled; existing threads retain their original provider ID.
-
-## Native skills
-
-BB discovers skills in workspace `.agents/skills` and legacy `.agent/skills`, and in personal `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills`, and `~/.gemini/config/skills`. Installed CLI plugin skill directories are not yet resolved into BB's picker. See [Antigravity skills](https://antigravity.google/docs/skills).
-
-The provider uses the Antigravity mark in BB's model selector, rendered in one color to follow the theme. The plugin page uses the color mark. See [asset attribution](assets/README.md).
+- `AdzeB` ([PR #27](https://github.com/ols-md/bb-plugin-antigravity/pull/27) profile directory env forwarding, [PR #28](https://github.com/ols-md/bb-plugin-antigravity/pull/28) `xhigh` and `max` reasoning levels)
+- `mturilin` ([Issue #29](https://github.com/ols-md/bb-plugin-antigravity/issues/29) ACP proxy for native system prompts, tip forking, manual compaction, and outdated CLI diagnostics)
