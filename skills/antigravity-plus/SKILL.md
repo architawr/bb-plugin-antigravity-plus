@@ -53,7 +53,7 @@ Start a multi-agent swarm with `/swarm`. Antigravity supports pinning different 
 
 - **Native system prompts.** BB thread and skill instructions move into `_meta.antigravity.systemPrompt.append` and re-apply on session load and resume.
 - **Tip forking (`fork: "tip"`).** Forks at the latest message through the ACP proxy, or natively if a future `agy` release advertises `sessionCapabilities.fork`. Mid-thread rewind is unsupported.
-- **Manual compaction.** Runs native `/compact` (`agy 1.5.14+`) and reports failure if the CLI sends `/compact` to the model instead.
-- **Environment passthrough.** `BB_ANTIGRAVITY_GEMINI_DIR` and `BB_ANTIGRAVITY_APP_DATA_DIR` forward as `--gemini-dir` and `--app-data-dir`. Set `BB_AGY_ACP_PROXY=0` to bypass the local ACP proxy for troubleshooting.
+- **Manual and automatic compaction.** Runs native `/compact` (`agy 1.5.14+`) with failure detection if the CLI sends `/compact` to the model, and surfaces automatic Antigravity compactions as native **Compacted context** items in BB's thread timeline.
+- **Environment passthrough.** `BB_ANTIGRAVITY_GEMINI_DIR` and `BB_ANTIGRAVITY_APP_DATA_DIR` forward as `--gemini-dir` and `--app-data-dir`. `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`, e.g. `80%` or `700K`) sets the auto-compaction threshold via `bb machine env`. Set `BB_AGY_ACP_PROXY=0` to bypass the local ACP proxy for troubleshooting.
 - **Native skills.** Workspace `.agents/skills` (ancestors) and `.agent/skills`; user `~/.gemini/antigravity-cli/skills`, `~/.gemini/antigravity-cli/builtin/skills` (prefixed `antigravity:`), `~/.gemini/skills`, and `~/.gemini/config/skills`.
 - **Usage limits.** Exposed via `provider/usage` and `provider-usage.v1` (`bb settings usage --refresh --json`).

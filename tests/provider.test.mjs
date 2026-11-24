@@ -109,5 +109,6 @@ test('deriveProviderOptions always isolates sessions and maps approval and sandb
     'BB_ANTIGRAVITY_GEMINI_DIR',
     'BB_ANTIGRAVITY_APP_DATA_DIR',
     'BB_AGY_ACP_PROXY',
+    'AGY_CLI_AUTO_COMPACT_OVERRIDE',
   ]);
 });

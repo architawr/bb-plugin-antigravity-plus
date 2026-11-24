@@ -1,6 +1,7 @@
 import { experimental_acpLaunchSpecSchema, experimental_acpProviderBridge } from "@get-bb/plugin-sdk/provider-bridge/acp";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { threadStartParamsSchema, threadResumeParamsSchema, turnStartParamsSchema } from "@get-bb/plugin-sdk/provider-bridge";
+import { createAutoCompactionTracker } from "./auto-compaction.ts";
 import { createBackgroundTaskTracker, defaultBackgroundTaskStatePath } from "./background-tasks.ts";
 import { ANTIGRAVITY_ACP_DIALECT_ID, applyThreadCommandDescriptions, onToolUpdate, registerAntigravityAcpDialect } from "./dialect.ts";
 import { modeControlOutput } from "./mode-controls.ts";
@@ -20,6 +21,14 @@ const MAX_TRACKED_SANDBOX_ESCAPES = 500;
 
 let rawStdoutWrite: typeof process.stdout.write | null = null;
 let trackerInstance: ReturnType<typeof createBackgroundTaskTracker> | null = null;
+let autoCompactionInstance: ReturnType<typeof createAutoCompactionTracker> | null = null;
+
+function getAutoCompactionTracker() {
+  if (!autoCompactionInstance) {
+    autoCompactionInstance = createAutoCompactionTracker();
+  }
+  return autoCompactionInstance;
+}
 
 function getBackgroundTaskTracker() {
   if (!trackerInstance) {
@@ -316,7 +325,9 @@ function ensureStdoutFilter() {
   const output = modeControlOutput(
     interceptApproval,
     line => getBackgroundTaskTracker().processStdoutLine(
-      recordSandboxEscapeDeltas(applyThreadCommandDescriptions(line, commandDescriptionsThreads)),
+      getAutoCompactionTracker().processStdoutLine(
+        recordSandboxEscapeDeltas(applyThreadCommandDescriptions(line, commandDescriptionsThreads)),
+      ),
     ),
   );
   output.on("data", chunk => write(chunk));
@@ -326,6 +337,7 @@ function ensureStdoutFilter() {
 
 function disposeTracker() {
   trackerInstance?.dispose();
+  autoCompactionInstance?.dispose();
 }
 
 export const experimental_providerBridge = {
@@ -355,6 +367,7 @@ export const experimental_providerBridge = {
     const withDefaults = applyAntigravityDefaults(line, parsed);
     const subagentTransformed = transformSubagentRequest(withDefaults.line, withDefaults.parsed);
     rememberApprovalSetting(subagentTransformed.parsed);
+    getAutoCompactionTracker().handleInboundRequest(subagentTransformed.parsed);
     const closeDeltas = getBackgroundTaskTracker().handleInboundRequest(subagentTransformed.parsed);
     if (closeDeltas.length > 0) {
       const stopThreadId = (subagentTransformed.parsed as Record<string, any> | null)?.params?.threadId;

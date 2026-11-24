@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-antigravity-plus",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "license": "MIT",
   "author": "Tim Sherstyuk",
@@ -22,6 +22,7 @@
     "host.ts",
     "app.tsx",
     "cli.ts",
+    "auto-compaction.ts",
     "background-tasks.ts",
     "subagents.ts",
     "dialect.ts",

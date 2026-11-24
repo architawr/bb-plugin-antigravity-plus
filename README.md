@@ -88,7 +88,7 @@ Manual compaction wires BB's Compact button and `bb thread compact` to Antigravi
 - **Auth-aware health, install, and update.** Provider health checks detect missing `agy`, flag versions below `1.5.0`, verify sign-in via a zero-turn `/usage` probe without spending tokens, direct signed-out users to `agy acp --login`, and wire BB's native **Install** and **Update** (`agy update`) actions.
 - **Distinguished builtin skills.** Indexes `.gemini/antigravity-cli/builtin/skills` with the `antigravity:` prefix so builtin Antigravity skills stand apart from your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`) and workspace (`.agents/skills`, `.agent/skills`) skills in BB's picker.
 - **Per-model-group quota tracking.** Reports 5-hour and 7-day usage windows (`Gemini`, `Claude/GPT`, `Argon`) to BB's Usage dashboard and settings through `provider/usage` and `provider-usage.v1`.
-- **Profile isolation.** Passes `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, and `BB_AGY_ACP_PROXY` through `env.passthrough` and forwards profile paths to `agy acp` as `--gemini-dir` and `--app-data-dir`.
+- **Profile isolation and auto-compaction override.** Passes `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`) through `env.passthrough`, and surfaces automatic Antigravity compactions as native **Compacted context** items in BB's thread timeline.
 
 ## Getting started
 

@@ -235,6 +235,7 @@ export default async function antigravity(bb: BbPluginApi) {
         "BB_ANTIGRAVITY_GEMINI_DIR",
         "BB_ANTIGRAVITY_APP_DATA_DIR",
         "BB_AGY_ACP_PROXY",
+        "AGY_CLI_AUTO_COMPACT_OVERRIDE",
       ],
     },
   });

@@ -255,6 +255,21 @@ for (const required of ["LICENSE", "README.md", "PLUGIN_OVERVIEW.md", "SECURITY.
     fail(`Required file "${required}" missing from npm pack output`);
   }
 }
+// Architectural fitness function: every root .ts module imported by entrypoints must ship in npm pack.
+const visitedModules = new Set();
+const moduleQueue = ["server.ts", "host.ts", "app.tsx"];
+while (moduleQueue.length > 0) {
+  const mod = moduleQueue.shift();
+  if (!mod || visitedModules.has(mod) || !existsSync(join(ROOT, mod))) continue;
+  visitedModules.add(mod);
+  if (!packedPaths.has(mod)) {
+    fail(`Imported runtime module "${mod}" is missing from package.json "files" / npm pack output`);
+  }
+  const source = readUtf8(mod);
+  for (const match of source.matchAll(/from\s+["']\.\/([^"']+\.tsx?)["']/g)) {
+    if (match[1]) moduleQueue.push(match[1]);
+  }
+}
 for (const path of packedPaths) {
   if (path.endsWith(".map") || path.startsWith(".env") || path.includes("scratch/")) {
     fail(`Disallowed file "${path}" included in npm pack output`);
