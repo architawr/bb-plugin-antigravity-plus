@@ -210,6 +210,7 @@ export default async function antigravity(bb: BbPluginApi) {
         { path: ".gemini/antigravity-cli/builtin/skills", namePrefix: "antigravity:" },
         ".gemini/skills",
         ".gemini/config/skills",
+        ".agents/skills",
       ],
       project: [
         { path: ".agents/skills", ancestors: true },

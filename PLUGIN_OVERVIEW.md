@@ -8,9 +8,9 @@ Antigravity Provider + closes those gaps on top of your existing `agy` login, wi
 
 - **Instructions that survive reloads.** Moves BB thread and skill instructions into Antigravity's native system prompt channel and re-applies them automatically on every session load and resume.
 - **Live `/swarm` board inside BB.** Starting `/swarm` opens a **Swarm** tab in the thread side panel and adds a clickable status pill above the composer. Inspect the coordinator's plan overview, member roster with per-worker models, agent filters, and Markdown board posts alongside readable swarm timeline cards. Works on local and remote hosts.
-- **Tip forking and manual `/compact`.** Fork any thread at its latest message, with automatic pass-through if a future CLI release adds native session forking. Run manual `/compact` (`agy 1.5.14+`) from BB's Compact action with failure detection when the CLI treats `/compact` as ordinary chat.
+- **Tip forking and manual + auto compaction.** Fork any thread at its latest message, with automatic pass-through if a future CLI release adds native session forking. Run manual `/compact` (`agy 1.5.14+`) from BB's Compact action with failure detection, and surface automatic mid-turn compactions in BB's timeline.
 - **Full reasoning ladder and host-cached models.** Discovers CLI models once per host, exposes `low`, `medium`, `high`, `xhigh`, and `max` efforts per model, and maps **Build** and **Plan** onto a single mode selector.
-- **Readable tool cards, background banners, and skills.** Shows plain-English command summaries, clean output and exit codes, **Outside of sandbox** badges, live background task banners that recover across restarts, optional BB child-thread delegation, and `antigravity:`-prefixed builtin skills in BB's picker.
+- **Readable tool cards, background banners, and skills.** Shows plain-English command summaries, clean output and exit codes, **Outside of sandbox** badges, live background task banners across restarts, optional BB child-thread delegation, and `~/.agents/skills` plus `antigravity:`-prefixed builtin skills in BB's picker.
 - **Per-model quota tracking and isolated sessions.** Reports 5-hour and 7-day usage windows (`Gemini`, `Claude/GPT`, `Argon`) in BB's Usage dashboard, runs one worker process per thread (`--process-per-session`), fixes macOS BB Desktop Electron spawns, and forwards custom `agy` profile directories.
 
 ## Permissions and safety
@@ -23,7 +23,7 @@ The plugin inherits your CLI sandbox configuration unless you turn on the option
 
 Requires BB 0.50+, Node.js 22+, Antigravity CLI 1.5.0+ (`1.5.14+` recommended for `/compact`) on the target host, and a signed-in Google account. Provider quota and charges apply. Remote hosts need their own CLI install and sign-in.
 
-Built-in health checks verify CLI version and sign-in without spending tokens, guide signed-out users to `agy acp --login`, and wire BB's **Install** and **Update** (`agy update`) actions. Verified on macOS (BB Desktop), Linux, and Windows.
+Built-in health checks verify CLI version and sign-in without spending tokens, guide signed-out users to `agy acp --login`, check for newer CLI releases in **Settings -> Updates**, and wire BB's **Install** and **Update** (`agy update`) actions. Verified on macOS (BB Desktop), Linux, and Windows.
 
 ## Attribution and limits
 

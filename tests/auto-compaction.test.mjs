@@ -17,6 +17,10 @@ function deltaLine(threadId, deltas) {
   return JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId, deltas } });
 }
 
+function identityNotificationLine(threadId, providerThreadId) {
+  return JSON.stringify({ jsonrpc: "2.0", method: "thread/identity", params: { threadId, providerThreadId } });
+}
+
 test("surfaces automatic CHECKPOINT entries once on contextWindow/turn.boundary and never replays historical checkpoints", () => {
   const root = mkdtempSync(join(tmpdir(), "agp-autocompact-"));
   try {
@@ -82,7 +86,8 @@ test("suppresses duplicate compaction cards during manual thread/compact while s
       resolveTranscriptPath: () => transcript,
     });
     tracker.handleInboundRequest({ method: "thread/start", params: { threadId: "thr_2" } });
-    tracker.processStdoutLine(deltaLine("thr_2", [{ kind: "thread.identity", providerThreadId: VALID_UUID }]));
+    // Real BB bridge emits thread/identity as a top-level JSON-RPC notification, not inside thread/delta.
+    tracker.processStdoutLine(identityNotificationLine("thr_2", VALID_UUID));
 
     // Manual compaction writes a CHECKPOINT and BB's bridge emits context.compacted itself.
     tracker.handleInboundRequest({ method: "thread/compact", params: { threadId: "thr_2" } });
@@ -144,7 +149,7 @@ test("handles malformed UUIDs, partial lines, oversized bursts, and failed manua
 
     // Failed manual compaction must clear manualCompactionInFlight on turn.boundary.
     tracker.handleInboundRequest({ method: "thread/start", params: { threadId: "thr_3" } });
-    tracker.processStdoutLine(deltaLine("thr_3", [{ kind: "thread.identity", providerThreadId: VALID_UUID }]));
+    tracker.processStdoutLine(identityNotificationLine("thr_3", VALID_UUID));
     tracker.handleInboundRequest({ method: "thread/compact", params: { threadId: "thr_3" } });
     tracker.processStdoutLine(deltaLine("thr_3", [{ kind: "turn.boundary", status: "failed" }]));
 

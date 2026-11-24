@@ -129,6 +129,7 @@ function parseMaintenanceRequest(parsed: unknown): {
   id: string | number;
   method: "provider/usage" | "provider/health" | "provider/installation/status" | "provider/installation/run";
   action?: "install" | "update";
+  checkUpdates?: boolean;
   command: string;
   cwd?: string;
   env?: Record<string, string>;
@@ -153,6 +154,7 @@ function parseMaintenanceRequest(parsed: unknown): {
       : undefined;
   const spec = experimental_acpLaunchSpecSchema.safeParse(providerOptions?.acpLaunchSpec);
   const action = params?.action === "install" || params?.action === "update" ? params.action : undefined;
+  const checkUpdates = typeof params?.checkUpdates === "boolean" ? params.checkUpdates : undefined;
   const envVars =
     params?.envVars && typeof params.envVars === "object" && !Array.isArray(params.envVars)
       ? (params.envVars as Record<string, string>)
@@ -161,6 +163,7 @@ function parseMaintenanceRequest(parsed: unknown): {
     id,
     method,
     action,
+    checkUpdates,
     command: spec.success ? spec.data.command : "agy",
     cwd: spec.success ? spec.data.cwd : (typeof params?.cwd === "string" ? params.cwd : undefined),
     env: { ...(spec.success ? spec.data.env : undefined), ...envVars },
@@ -426,7 +429,10 @@ export const experimental_providerBridge = {
         return;
       }
       if (maintenanceRequest.method === "provider/installation/status") {
-        void readAntigravityInstallationStatus(probeOptions).then(result => {
+        void readAntigravityInstallationStatus({
+          ...probeOptions,
+          checkUpdates: maintenanceRequest.checkUpdates ?? true,
+        }).then(result => {
           process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         }).catch(error => {
           process.stdout.write(`${JSON.stringify({

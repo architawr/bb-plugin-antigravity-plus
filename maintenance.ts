@@ -1,4 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import {
   experimental_downloadedInstallerCommand,
@@ -9,8 +10,10 @@ import { resolveAntigravityCommand } from "./cli.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
 
 type AntigravityProviderUsageResult = Awaited<ReturnType<typeof readAntigravityProviderUsage>>;
+type SemverTuple = readonly [number, number, number];
 
 const execFileAsync = promisify(nodeExecFile);
+const UPDATE_CHECK_TIMEOUT_MS = 4_000;
 
 export const MINIMUM_SUPPORTED_AGY_VERSION = MIN_AGY_ACP_VERSION.join(".");
 export const AGY_UNIX_INSTALLER_URL = "https://antigravity.google/cli/install.sh";
@@ -22,6 +25,10 @@ export interface MaintenanceProbeOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  arch?: string;
+  isMusl?: boolean;
+  checkUpdates?: boolean;
+  fetch?: typeof globalThis.fetch;
   resolveCommand?: (command: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => string | null;
   execFile?: (command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number }) => Promise<{ stdout: string; stderr: string }>;
   checkUsage?: () => Promise<AntigravityProviderUsageResult>;
@@ -76,6 +83,78 @@ function installerCommand(platform?: NodeJS.Platform) {
   });
 }
 
+function isVersionNewer(latest: SemverTuple, current: SemverTuple): boolean {
+  for (let i = 0; i < 3; i += 1) {
+    if (latest[i] !== current[i]) return latest[i] > current[i];
+  }
+  return false;
+}
+
+function detectLinuxMusl(): boolean {
+  return existsSync("/lib/libc.musl-x86_64.so.1") || existsSync("/lib/libc.musl-aarch64.so.1");
+}
+
+function resolveAgyManifestPlatform(platform: NodeJS.Platform, arch: string, isMusl?: boolean): string | null {
+  const mappedArch = arch === "arm64" ? "arm64" : arch === "x64" ? "amd64" : null;
+  if (!mappedArch) return null;
+  if (platform === "darwin") return `darwin_${mappedArch}`;
+  if (platform === "win32") return `windows_${mappedArch}`;
+  if (platform === "linux") {
+    const musl = typeof isMusl === "boolean" ? isMusl : detectLinuxMusl();
+    return musl ? `linux_${mappedArch}_musl` : `linux_${mappedArch}`;
+  }
+  return null;
+}
+
+function extractDownloadBaseUrl(installerScript: string): string | null {
+  const match = installerScript.match(/^\s*DOWNLOAD_BASE_URL=["'](https:\/\/[^"'\s]+)["']/m);
+  if (!match) return null;
+  try {
+    const url = new URL(match[1]);
+    if (url.protocol !== "https:") return null;
+    return url.origin + url.pathname.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLatestAntigravityVersion(options: MaintenanceProbeOptions): Promise<SemverTuple | null> {
+  const manifestPlatform = resolveAgyManifestPlatform(
+    options.platform ?? process.platform,
+    options.arch ?? process.arch,
+    options.isMusl,
+  );
+  if (!manifestPlatform) return null;
+
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const installerRes = await fetchImpl(AGY_UNIX_INSTALLER_URL, {
+      signal: controller.signal,
+      headers: { Accept: "text/plain" },
+    });
+    if (!installerRes.ok) return null;
+    const baseUrl = extractDownloadBaseUrl(await installerRes.text());
+    if (!baseUrl) return null;
+
+    const manifestRes = await fetchImpl(`${baseUrl}/manifests/${manifestPlatform}.json`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!manifestRes.ok) return null;
+    const payload = await manifestRes.json() as { version?: unknown } | null;
+    return typeof payload?.version === "string" ? (parseAgyVersion(payload.version) ?? null) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function readAntigravityInstallationStatus(
   options: MaintenanceProbeOptions = {},
 ): Promise<AntigravityInstallationStatus> {
@@ -83,6 +162,7 @@ export async function readAntigravityInstallationStatus(
   const env = options.env ?? process.env;
   const resolveCommand = options.resolveCommand ?? resolveAntigravityCommand;
   const run = options.execFile ?? ((cmd, args, opts) => execFileAsync(cmd, args, { ...opts, encoding: "utf8" }));
+  const shouldCheckUpdates = options.checkUpdates === true;
 
   const executablePath = requested === "agy"
     ? resolveCommand(requested, { cwd: options.cwd, env })
@@ -90,13 +170,14 @@ export async function readAntigravityInstallationStatus(
 
   if (!executablePath) {
     const install = installerCommand(options.platform);
+    const latestParsed = shouldCheckUpdates ? await fetchLatestAntigravityVersion(options) : null;
     return {
       executableName: "agy",
       executablePath: null,
       installed: false,
       installSource: "notInstalled",
       currentVersion: null,
-      latestVersion: null,
+      latestVersion: latestParsed ? latestParsed.join(".") : null,
       minimumSupportedVersion: MINIMUM_SUPPORTED_AGY_VERSION,
       npmPackageName: null,
       npmGlobalPackageVersion: null,
@@ -106,22 +187,28 @@ export async function readAntigravityInstallationStatus(
     };
   }
 
-  let currentVersion: string | null = null;
-  let versionUnsupported = false;
-  try {
-    const { stdout, stderr } = await run(executablePath, ["--version"], {
-      cwd: options.cwd,
-      env,
-      timeout: 10_000,
-    });
-    const parsed = parseAgyVersion(`${stdout}\n${stderr}`);
-    if (parsed) {
-      currentVersion = parsed.join(".");
-      versionUnsupported = isAgyVersionTooOld(parsed);
+  const readInstalledVersion = async (): Promise<SemverTuple | null> => {
+    try {
+      const { stdout, stderr } = await run(executablePath, ["--version"], {
+        cwd: options.cwd,
+        env,
+        timeout: 10_000,
+      });
+      return parseAgyVersion(`${stdout}\n${stderr}`) ?? null;
+    } catch {
+      return null;
     }
-  } catch {
-    currentVersion = null;
-  }
+  };
+
+  const [currentParsed, latestParsed] = await Promise.all([
+    readInstalledVersion(),
+    shouldCheckUpdates ? fetchLatestAntigravityVersion(options) : Promise.resolve(null),
+  ]);
+
+  const currentVersion = currentParsed ? currentParsed.join(".") : null;
+  const versionUnsupported = currentParsed ? isAgyVersionTooOld(currentParsed) : false;
+  const latestVersion = latestParsed ? latestParsed.join(".") : null;
+  const updateAvailable = currentParsed !== null && latestParsed !== null && isVersionNewer(latestParsed, currentParsed);
 
   return {
     executableName: "agy",
@@ -129,12 +216,12 @@ export async function readAntigravityInstallationStatus(
     installed: true,
     installSource: "external",
     currentVersion,
-    latestVersion: null,
+    latestVersion,
     minimumSupportedVersion: MINIMUM_SUPPORTED_AGY_VERSION,
     npmPackageName: null,
     npmGlobalPackageVersion: null,
     installAction: { kind: "update", label: "Update", command: "agy update" },
-    needsUpdate: versionUnsupported,
+    needsUpdate: versionUnsupported || updateAvailable,
     versionUnsupported,
   };
 }
@@ -143,7 +230,7 @@ export async function planAntigravityInstallationRun(
   action: "install" | "update",
   options: MaintenanceProbeOptions = {},
 ): Promise<AntigravityInstallationRunResult> {
-  const status = await readAntigravityInstallationStatus(options);
+  const status = await readAntigravityInstallationStatus({ ...options, checkUpdates: false });
   if (action === "install") {
     return {
       available: true,
@@ -171,7 +258,7 @@ export async function planAntigravityInstallationRun(
 export async function readAntigravityHealth(
   options: MaintenanceProbeOptions = {},
 ): Promise<AntigravityHealthResult> {
-  const status = await readAntigravityInstallationStatus(options);
+  const status = await readAntigravityInstallationStatus({ ...options, checkUpdates: false });
   if (!status.installed) {
     return {
       supported: true,

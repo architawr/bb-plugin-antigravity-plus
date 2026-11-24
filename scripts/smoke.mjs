@@ -41,7 +41,7 @@ const timeout = setTimeout(() => { child.kill(); process.exitCode = 1; }, 60000)
 child.on('error', () => { for (const p of pending.values()) p.reject(new Error('Could not launch agy')); });
 child.on('exit', () => { for (const p of pending.values()) p.reject(new Error('ACP exited before completing')); });
 try {
-  const initialized = await request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'bb-antigravity-plus-smoke', version: '0.2.1' } });
+  const initialized = await request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'bb-antigravity-plus-smoke', version: '0.2.2' } });
   assert.equal(initialized.protocolVersion, 1);
   if (process.argv.includes('--capabilities')) console.log(JSON.stringify(initialized.agentCapabilities, null, 2));
   const session = await request('session/new', { cwd, mcpServers: [] });

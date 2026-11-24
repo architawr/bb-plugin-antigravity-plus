@@ -1,6 +1,6 @@
 # Provider capabilities
 
-Verified against Antigravity CLI 1.5.15 on macOS (BB Desktop), 1.5.14 on Linux, and 1.5.1+ on Windows with BB SDK 0.6.157. A terminal CLI feature does not imply that the same feature is exposed through ACP.
+Verified against Antigravity CLI 1.5.16 on macOS (BB Desktop), 1.5.14 on Linux, and 1.5.1+ on Windows with BB SDK 0.6.157. A terminal CLI feature does not imply that the same feature is exposed through ACP.
 
 | Feature | Current integration |
 | --- | --- |
@@ -18,8 +18,8 @@ Verified against Antigravity CLI 1.5.15 on macOS (BB Desktop), 1.5.14 on Linux, 
 | Per-session worker isolation | Always passes `--process-per-session` to `agy acp` so each thread runs in its own CLI worker process |
 | CLI terminal sandbox | Inherits CLI settings; optional `sandbox` flag adds `--sandbox` for new threads |
 | Profile, proxy, and compaction env passthrough | Declares `env.passthrough` for `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`) and forwards profile flags to `agy acp` |
-| Auth-aware CLI health, install, and update | Implements `provider/health` (version + zero-turn `/usage` auth check guiding to `agy acp --login`), `provider/installation/status`, and `provider/installation/run` (`Install` + `agy update`, minimum `1.5.0`) |
-| Native skills in BB picker | Workspace `.agents/skills` (ancestors) and `.agent/skills`; user `.gemini/antigravity-cli/skills`, `.gemini/antigravity-cli/builtin/skills` (prefixed `antigravity:`), `.gemini/skills`, and `.gemini/config/skills` |
+| Auth-aware CLI health, install, and update | Implements `provider/health` (offline version + zero-turn `/usage` auth check guiding to `agy acp --login`), `provider/installation/status` (dynamic latest-version check via `install.sh` platform manifest when `checkUpdates: true`), and `provider/installation/run` (`Install` + `agy update`, minimum `1.5.0`) |
+| Native skills in BB picker | Workspace `.agents/skills` (ancestors) and `.agent/skills`; user `.gemini/antigravity-cli/skills`, `.gemini/antigravity-cli/builtin/skills` (prefixed `antigravity:`), `.gemini/skills`, `.gemini/config/skills`, and `.agents/skills` (lowest-precedence cross-agent fallback) |
 | Tip fork | Supported (`fork: "tip"`) through the ACP proxy (`VACUUM INTO` + ID swap + `brain/` copy), with automatic pass-through if `agy` advertises native `session/fork` |
 | Manual and automatic compaction | Manual `/compact` (`agy 1.5.14+`) with failure detection if `/compact` reaches the model, plus automatic compaction visibility in BB's thread timeline from incremental `transcript.jsonl` `CHECKPOINT` detection |
 | Subscription quota/usage | Supported via `agy -p "/usage" --output-format json`, `provider/usage`, and `provider-usage.v1` |

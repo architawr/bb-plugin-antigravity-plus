@@ -10,6 +10,8 @@ Antigravity's normal approval checks stay enabled in Accept edits mode by defaul
 
 The Swarm tab reads `<appData>/brain/<conversationId>/.system_generated/swarm/` (`members.json`, `board.jsonl`, `swarm.json`, `plan.json`) read-only after validating `<conversationId>` as a strict UUID. It never writes to or deletes Antigravity's swarm files.
 
+When BB checks for provider CLI updates (`provider/installation/status` with `checkUpdates: true`), the plugin makes a read-only HTTPS GET request to Google's official Antigravity CLI installer (`https://antigravity.google/cli/install.sh`) and the platform release manifest URL declared inside it (`<DOWNLOAD_BASE_URL>/manifests/<platform>.json`) to compare your installed `agy` version against the latest published version. No local data, credentials, or identifiers are sent, and network failures degrade silently to an unknown latest version.
+
 Do not post credentials or raw private session logs in public issues. Report a suspected security issue privately through GitHub's private security reporting on [tymshe/bb-plugin-antigravity-plus](https://github.com/tymshe/bb-plugin-antigravity-plus).
 
 ## Local runtime state

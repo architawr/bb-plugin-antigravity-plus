@@ -98,6 +98,15 @@ test('deriveProviderOptions always isolates sessions and maps approval and sandb
   assert.ok(provider.experimental_nativeSkillRoots.user.some(
     root => typeof root === 'object' && root.path === '.gemini/antigravity-cli/builtin/skills' && root.namePrefix === 'antigravity:'
   ));
+  const userRootPaths = provider.experimental_nativeSkillRoots.user.map(
+    root => (typeof root === 'string' ? root : root.path)
+  );
+  assert.ok(userRootPaths.includes('.gemini/config/skills'));
+  assert.ok(userRootPaths.includes('.agents/skills'));
+  assert.ok(
+    userRootPaths.indexOf('.gemini/config/skills') < userRootPaths.indexOf('.agents/skills'),
+    'Antigravity-specific user skill roots must take precedence over the cross-agent .agents/skills fallback'
+  );
   assert.ok(provider.experimental_nativeSkillRoots.project.some(
     root => typeof root === 'object' && root.path === '.agents/skills' && root.ancestors === true
   ));

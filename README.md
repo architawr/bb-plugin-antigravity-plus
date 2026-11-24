@@ -19,7 +19,7 @@ BB can talk to `agy acp` through its built-in generic ACP provider, and basic ch
 
 **Antigravity Provider +** (`antigravity-plus`) closes those gaps by pairing BB's shared ACP bridge with a local Antigravity dialect, an in-process ACP proxy, and a native Swarm panel tab. It uses your existing [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) login with no extra API keys or custom ACP JSON.
 
-Verified on macOS (BB Desktop + `agy 1.5.15`), Linux (`agy 1.5.14`), and Windows (`agy 1.5.1+`).
+Verified on macOS (BB Desktop + `agy 1.5.16`), Linux (`agy 1.5.14`), and Windows (`agy 1.5.1+`).
 
 ## Why use this instead of BB's built-in ACP
 
@@ -28,13 +28,13 @@ Verified on macOS (BB Desktop + `agy 1.5.15`), Linux (`agy 1.5.14`), and Windows
 | Thread and skill instructions across restarts | Sent once in the first user prompt and lost on reload | Lifted into `_meta.antigravity.systemPrompt.append` and re-applied on every load and resume |
 | Running `/swarm` in a thread | Raw `Ran swarm` cards and a dead `alt+s` terminal hint | Live **Swarm** side-panel tab (auto-opens on start), clickable composer pill, roster filters, `plan.json` overview, and readable swarm tool cards |
 | Forking a thread | Unavailable | Tip forking (`fork: "tip"`) via `VACUUM INTO` + ID rewrite, with automatic pass-through if `agy` adds native `session/fork` |
-| Compacting a long thread | Unavailable | Native `/compact` (`agy 1.5.14+`) wired to BB's Compact action, reporting a failure if the CLI sends `/compact` to the model instead |
+| Compacting a long thread | Unavailable | Native `/compact` (`agy 1.5.14+`) wired to BB's Compact action with failure detection, plus automatic mid-turn compaction cards in the thread timeline |
 | Reasoning levels | Coarse subset only | Full per-model ladder (`low`, `medium`, `high`, `xhigh`, `max`) |
 | Work modes | Duplicate Plan triggers or raw ACP modes | Single **Build** / **Plan** mode selector mapped cleanly to native modes |
 | Command cards and sandbox safety | Raw shell strings, noisy timestamps, no escape guard | `toolSummary` titles, clean output + exit codes, **Outside of sandbox** badges, and sandbox-escape guard in Accept edits mode |
 | Background commands and subagents | Silent until completion | Live BB background task banner with restart recovery, plus optional `subagentsDisabled` toggle to delegate via BB child threads |
 | Session stability and model loading | Shared CLI worker, per-workspace catalog probe | `--process-per-session` enabled by default, host-scoped model cache, and macOS BB Desktop `ELECTRON_RUN_AS_NODE=1` fix |
-| Onboarding, skills, and quota | Manual setup and manual CLI checks | Auth-aware health check (`agy acp --login`), one-click Install / Update, `antigravity:` builtin skills in BB's picker, and per-model quota windows |
+| Onboarding, skills, and quota | Manual setup and manual CLI checks | Auth-aware health check (`agy acp --login`), live CLI version checks and one-click Install / Update, `.agents/skills` + `antigravity:` builtin skills in BB's picker, and per-model quota windows |
 
 ## Screenshots
 
@@ -85,8 +85,8 @@ Manual compaction wires BB's Compact button and `bb thread compact` to Antigravi
 
 ### Clear onboarding, builtin skills, and quota windows
 
-- **Auth-aware health, install, and update.** Provider health checks detect missing `agy`, flag versions below `1.5.0`, verify sign-in via a zero-turn `/usage` probe without spending tokens, direct signed-out users to `agy acp --login`, and wire BB's native **Install** and **Update** (`agy update`) actions.
-- **Distinguished builtin skills.** Indexes `.gemini/antigravity-cli/builtin/skills` with the `antigravity:` prefix so builtin Antigravity skills stand apart from your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`) and workspace (`.agents/skills`, `.agent/skills`) skills in BB's picker.
+- **Auth-aware health, live update checks, and install.** Provider health checks detect missing `agy`, flag versions below `1.5.0`, verify sign-in via a zero-turn `/usage` probe without spending tokens, direct signed-out users to `agy acp --login`, check the latest published CLI release in **Settings -> Updates** via Google's official installer manifest, and wire BB's native **Install** and **Update** (`agy update`) actions.
+- **Distinguished builtin and cross-agent skills.** Indexes `.gemini/antigravity-cli/builtin/skills` with the `antigravity:` prefix alongside your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`, `.agents/skills`) and workspace (`.agents/skills`, `.agent/skills`) roots in BB's picker, preserving Antigravity-specific precedence over `.agents/skills`.
 - **Per-model-group quota tracking.** Reports 5-hour and 7-day usage windows (`Gemini`, `Claude/GPT`, `Argon`) to BB's Usage dashboard and settings through `provider/usage` and `provider-usage.v1`.
 - **Profile isolation and auto-compaction override.** Passes `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`) through `env.passthrough`, and surfaces automatic Antigravity compactions as native **Compacted context** items in BB's thread timeline.
 

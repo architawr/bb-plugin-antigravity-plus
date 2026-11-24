@@ -324,7 +324,13 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
   }
 
   function processStdoutLine(line: string): string {
-    if (!line.includes('"thread/delta"')) return line;
+    if (
+      !line.includes('"thread/delta"') &&
+      !line.includes('"thread/identity"') &&
+      !line.includes('"session/replaced"')
+    ) {
+      return line;
+    }
     let message: any;
     try {
       message = JSON.parse(line);
@@ -332,6 +338,15 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
       return line;
     }
     const params = message?.params;
+    if (
+      (message?.method === "thread/identity" || message?.method === "session/replaced") &&
+      typeof params?.threadId === "string" &&
+      typeof params?.providerThreadId === "string"
+    ) {
+      const state = getOrCreateState(params.threadId);
+      bindProviderThread(state, params.providerThreadId);
+      return line;
+    }
     if (message?.method !== "thread/delta" || typeof params?.threadId !== "string" || !Array.isArray(params.deltas)) {
       return line;
     }
