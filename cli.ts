@@ -1,8 +1,44 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { experimental_hostToolchain } from "@get-bb/plugin-sdk/process";
 import { AGY_ACP_PROXY_FLAG, AGY_ACP_PROXY_STATE_DIR_ENV, AGY_ACP_PROXY_SWITCH_ENV } from "./acp-proxy.ts";
+
+const ARTIFACT_DIGEST_RE = /^[a-f0-9]{64}$/u;
+
+function resolveProxyHostFile(hostFile: string): string | null {
+  if (existsSync(hostFile)) return hostFile;
+  const digestDir = dirname(hostFile);
+  if (!ARTIFACT_DIGEST_RE.test(basename(digestDir))) {
+    // Preserve non-artifact paths (such as synthetic test paths or direct source checkouts).
+    return hostFile;
+  }
+  const pluginCacheDir = dirname(digestDir);
+  const fileName = basename(hostFile);
+  let entries;
+  try {
+    entries = readdirSync(pluginCacheDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  let bestPath: string | null = null;
+  let bestMtimeMs = -1;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !ARTIFACT_DIGEST_RE.test(entry.name)) continue;
+    const candidate = join(pluginCacheDir, entry.name, fileName);
+    try {
+      const stat = statSync(candidate);
+      if (!stat.isFile()) continue;
+      if (stat.mtimeMs > bestMtimeMs || (stat.mtimeMs === bestMtimeMs && (bestPath === null || candidate > bestPath))) {
+        bestMtimeMs = stat.mtimeMs;
+        bestPath = candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return bestPath;
+}
 
 export function resolveAntigravityCommand(command: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null {
   const resolved = experimental_hostToolchain.resolve(command, options);
@@ -83,7 +119,9 @@ export function resolveAntigravityLaunchSpec(request: any, proxy?: AgyAcpProxyLa
     const switches = [process.env, params?.envVars, params?.options?.envVars, spec.env];
     if (switches.some(env => env?.[AGY_ACP_PROXY_SWITCH_ENV] === "0")) continue;
     if (!isAgy || !proxy || method.startsWith("provider/")) continue;
-    spec.args = [proxy.hostFile, AGY_ACP_PROXY_FLAG, spec.command, ...(Array.isArray(spec.args) ? spec.args : [])];
+    const proxyHostFile = resolveProxyHostFile(proxy.hostFile);
+    if (!proxyHostFile) continue;
+    spec.args = [proxyHostFile, AGY_ACP_PROXY_FLAG, spec.command, ...(Array.isArray(spec.args) ? spec.args : [])];
     spec.command = process.execPath;
     spec.env = {
       ...spec.env,

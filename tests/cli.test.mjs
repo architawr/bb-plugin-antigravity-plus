@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAntigravityCommand, resolveAntigravityLaunchSpec } from '../cli.ts';
@@ -103,4 +103,48 @@ test('proxy launch spec sets ELECTRON_RUN_AS_NODE=1 for Electron hosts', () => {
   assert.equal(spec.command, process.execPath);
   assert.equal(spec.env.ELECTRON_RUN_AS_NODE, '1');
   assert.equal(spec.env.BB_AGY_ACP_PROXY_STATE_DIR, '/tmp/state');
+});
+
+test('recovers proxy host artifact after BB prunes an older digest directory during plugin upgrade', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-artifact-gc-'));
+  try {
+    const oldDigest = 'a'.repeat(64);
+    const midDigest = 'b'.repeat(64);
+    const newDigest = 'c'.repeat(64);
+    const deletedHostFile = join(root, oldDigest, 'host.mjs');
+
+    // Simulate two surviving sibling artifacts and one unrelated non-digest directory.
+    mkdirSync(join(root, midDigest), { recursive: true });
+    mkdirSync(join(root, newDigest), { recursive: true });
+    mkdirSync(join(root, 'not-a-digest'), { recursive: true });
+    const midFile = join(root, midDigest, 'host.mjs');
+    const newFile = join(root, newDigest, 'host.mjs');
+    writeFileSync(midFile, '// older');
+    writeFileSync(newFile, '// newest');
+    writeFileSync(join(root, 'not-a-digest', 'host.mjs'), '// ignored');
+    utimesSync(midFile, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    utimesSync(newFile, new Date(1_800_000_000_000), new Date(1_800_000_000_000));
+
+    const spec = { command: 'agy', args: ['acp', '--disable-telemetry'], env: {} };
+    resolveAntigravityLaunchSpec(
+      { method: 'turn/start', params: { options: { providerOptions: { acpLaunchSpec: spec } } } },
+      { hostFile: deletedHostFile, stateDir: '/tmp/state' },
+    );
+    assert.equal(spec.command, process.execPath);
+    assert.equal(spec.args[0], newFile);
+    assert.equal(spec.args[1], '--agy-acp-proxy');
+
+    // If all digest artifacts are gone, degrade cleanly to launching agy directly instead of crashing with MODULE_NOT_FOUND.
+    rmSync(join(root, midDigest), { recursive: true, force: true });
+    rmSync(join(root, newDigest), { recursive: true, force: true });
+    const fallbackSpec = { command: 'agy', args: ['acp', '--disable-telemetry'], env: {} };
+    resolveAntigravityLaunchSpec(
+      { method: 'turn/start', params: { options: { providerOptions: { acpLaunchSpec: fallbackSpec } } } },
+      { hostFile: deletedHostFile, stateDir: '/tmp/state' },
+    );
+    assert.notEqual(fallbackSpec.command, process.execPath);
+    assert.equal(fallbackSpec.args[0], 'acp');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
