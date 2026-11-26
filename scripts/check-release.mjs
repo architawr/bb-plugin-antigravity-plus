@@ -114,7 +114,7 @@ if (entry.icon?.url !== expectedIconUrl) {
   fail(`marketplace icon.url is "${entry.icon?.url}", expected "${expectedIconUrl}"`);
 }
 
-// 4. Marketplace overview & description contract
+// 4. Marketplace overview, manifest metadata & description contract
 if (overview.length > 4000) {
   fail(`PLUGIN_OVERVIEW.md is ${overview.length} chars (marketplace max is 4000)`);
 }
@@ -135,6 +135,7 @@ if (/http:\/\//i.test(overview)) {
 }
 
 for (const [label, content] of [
+  ["package.json bb.description", String(pkg.bb?.description ?? "")],
   ["README.md", readme],
   ["PLUGIN_OVERVIEW.md", overview],
   ["docs/marketplace-entry.template.json", JSON.stringify(entry)],
@@ -148,28 +149,88 @@ for (const [label, content] of [
   }
 }
 
-const hook = `${String(entry.description ?? "").split(". ")[0]}.`;
+const bbDesc = String(pkg.bb?.description ?? "").trim();
+if (!bbDesc) {
+  fail("package.json bb.description is required");
+}
+if (bbDesc !== String(entry.description ?? "").trim()) {
+  fail("package.json bb.description does not match docs/marketplace-entry.template.json description");
+}
+const hook = `${bbDesc.split(". ")[0].replace(/\.$/, "")}.`;
 if (hook.length > 140) {
   fail(`marketplace description hook is ${hook.length} chars (target <= 140)`);
 }
 if (hook.toLowerCase().startsWith("a plugin") || hook.toLowerCase().startsWith(entry.displayName.toLowerCase())) {
   fail(`marketplace description hook must start with a verb, not display name or "A plugin": "${hook}"`);
 }
-if (!Array.isArray(entry.tags) || entry.tags.length === 0 || entry.tags.length > 10) {
-  fail("marketplace entry tags must have 1 to 10 items");
+
+const DROPPED_KEYWORDS = new Set(["bb-plugin", "bb", "bb-plugins"]);
+const pkgKeywords = Array.isArray(pkg.keywords) ? pkg.keywords : [];
+if (!pkgKeywords.some((k) => typeof k === "string" && k.trim().toLowerCase() === "bb-plugin")) {
+  fail('package.json keywords must include "bb-plugin" for marketplace self-publishing');
+}
+const derivedTags = [];
+for (const kw of pkgKeywords) {
+  if (typeof kw !== "string") continue;
+  const tag = kw.trim().toLowerCase();
+  if (DROPPED_KEYWORDS.has(tag)) continue;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag) || tag.length > 32) {
+    fail(`invalid package.json keyword tag "${kw}"`);
+    continue;
+  }
+  if (!derivedTags.includes(tag)) derivedTags.push(tag);
+}
+if (derivedTags.length === 0 || derivedTags.length > 10) {
+  fail(`package.json derived marketplace tags must have 1 to 10 items (found ${derivedTags.length})`);
+}
+if (JSON.stringify(derivedTags) !== JSON.stringify(entry.tags ?? [])) {
+  fail(`package.json derived tags (${derivedTags.join(", ")}) !== marketplace template tags (${(entry.tags ?? []).join(", ")})`);
+}
+
+// Validate bbMarketplace object against the get-bb/marketplace crawler schema
+const ALLOWED_BB_MARKETPLACE_KEYS = new Set(["category", "secondaryCategories", "screenshots"]);
+const market = pkg.bbMarketplace;
+if (!market || typeof market !== "object" || Array.isArray(market)) {
+  fail("package.json bbMarketplace object is required for self-published category and screenshots");
 } else {
-  for (const tag of entry.tags) {
-    if (!/^[a-z0-9-]+$/.test(tag) || tag.length > 32) {
-      fail(`invalid marketplace tag "${tag}"`);
+  const unknownKeys = Object.keys(market).filter((k) => !ALLOWED_BB_MARKETPLACE_KEYS.has(k));
+  if (unknownKeys.length > 0) {
+    fail(`package.json bbMarketplace has unknown keys: ${unknownKeys.join(", ")}`);
+  }
+  if (typeof market.category !== "string" || !market.category.trim()) {
+    fail("package.json bbMarketplace.category is required");
+  } else if (market.category !== entry.category) {
+    fail(`package.json bbMarketplace.category (${market.category}) !== template category (${entry.category})`);
+  }
+  if (market.secondaryCategories !== undefined) {
+    if (!Array.isArray(market.secondaryCategories) || market.secondaryCategories.length > 3) {
+      fail("package.json bbMarketplace.secondaryCategories must be an array of at most 3 items");
+    } else {
+      if (new Set(market.secondaryCategories).size !== market.secondaryCategories.length || market.secondaryCategories.includes(market.category)) {
+        fail("package.json bbMarketplace.secondaryCategories must be distinct from each other and from category");
+      }
+      if (JSON.stringify(market.secondaryCategories) !== JSON.stringify(entry.secondaryCategories ?? [])) {
+        fail("package.json bbMarketplace.secondaryCategories does not match marketplace template");
+      }
     }
   }
 }
 
 // 5. Screenshots validation (pure Node PNG header check, works on macOS/Linux/Windows)
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const marketScreenshots = Array.isArray(market?.screenshots) ? market.screenshots : [];
 const declaredScreenshots = Array.isArray(entry.screenshots) ? entry.screenshots : [];
-if (declaredScreenshots.length === 0 || declaredScreenshots.length > 6) {
-  fail(`marketplace entry should reference 1 to 6 screenshots (found ${declaredScreenshots.length})`);
+if (marketScreenshots.length === 0 || marketScreenshots.length > 6) {
+  fail(`package.json bbMarketplace.screenshots must reference 1 to 6 screenshots (found ${marketScreenshots.length})`);
+}
+const invalidScreenshotEntries = marketScreenshots.filter((ref) => typeof ref !== "string" || !ref.trim());
+if (invalidScreenshotEntries.length > 0) {
+  fail("package.json bbMarketplace.screenshots entries must all be non-empty strings");
+} else if (
+  JSON.stringify(marketScreenshots.map((ref) => basename(ref))) !==
+  JSON.stringify(declaredScreenshots.map((ref) => basename(String(ref))))
+) {
+  fail("package.json bbMarketplace.screenshots order/list does not match docs/marketplace-entry.template.json");
 }
 
 const screenshotDir = join(ROOT, "assets/screenshots");
@@ -177,7 +238,12 @@ const actualFiles = existsSync(screenshotDir)
   ? readdirSync(screenshotDir).filter((name) => !name.startsWith("."))
   : [];
 
-for (const ref of declaredScreenshots) {
+for (const ref of marketScreenshots) {
+  if (typeof ref !== "string") continue;
+  if (!ref.startsWith("./assets/screenshots/") && !ref.startsWith("assets/screenshots/")) {
+    fail(`bbMarketplace screenshot "${ref}" must be a relative path under assets/screenshots/`);
+    continue;
+  }
   const file = basename(ref);
   const abs = join(screenshotDir, file);
   if (!existsSync(abs)) {
@@ -205,8 +271,8 @@ for (const ref of declaredScreenshots) {
 }
 
 for (const file of actualFiles) {
-  if (!declaredScreenshots.some((ref) => basename(ref) === file)) {
-    fail(`unreferenced screenshot file assets/screenshots/${file} (add to marketplace entry or delete)`);
+  if (!marketScreenshots.some((ref) => basename(ref) === file)) {
+    fail(`unreferenced screenshot file assets/screenshots/${file} (add to bbMarketplace.screenshots or delete)`);
   }
 }
 

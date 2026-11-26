@@ -1,10 +1,10 @@
 {
   "name": "bb-plugin-antigravity-plus",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "license": "MIT",
   "author": "Tim Sherstyuk",
-  "description": "Turn Antigravity CLI into a native BB provider with persistent instructions, tip forking, manual /compact, low-to-max reasoning, and a live /swarm board.",
+  "description": "Use Antigravity CLI in BB with built-in 5h/7d quotas, thread forking, /compact, per-model reasoning, and a live /swarm board.",
   "homepage": "https://github.com/tymshe/bb-plugin-antigravity-plus#readme",
   "bugs": {
     "url": "https://github.com/tymshe/bb-plugin-antigravity-plus/issues"
@@ -12,10 +12,15 @@
   "keywords": [
     "bb-plugin",
     "antigravity",
-    "acp",
+    "agy",
     "gemini",
+    "quota",
+    "usage",
+    "reasoning",
     "swarm",
-    "cli"
+    "compact",
+    "fork",
+    "acp"
   ],
   "files": [
     "server.ts",
@@ -53,7 +58,7 @@
   },
   "bb": {
     "name": "Antigravity Provider +",
-    "description": "Turn Antigravity CLI into a native BB provider with persistent instructions, tip forking, /compact, low-to-max reasoning, and a live /swarm board.",
+    "description": "Use Antigravity CLI in BB with built-in 5h/7d quotas, thread forking, /compact, per-model reasoning, and a live /swarm board. Uses your existing agy login with no extra API keys. Requires agy 1.5.0+ (1.5.14+ for /compact). Verified on macOS, Linux, and Windows.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
@@ -62,6 +67,18 @@
     "app": "./app.tsx",
     "skills": [
       "skills"
+    ]
+  },
+  "bbMarketplace": {
+    "category": "agents-and-providers",
+    "secondaryCategories": [
+      "token-usage-and-limits"
+    ],
+    "screenshots": [
+      "./assets/screenshots/thread-workflow.png",
+      "./assets/screenshots/usage.png",
+      "./assets/screenshots/swarm-board.png",
+      "./assets/screenshots/settings.png"
     ]
   },
   "scripts": {

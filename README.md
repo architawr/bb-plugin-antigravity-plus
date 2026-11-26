@@ -4,7 +4,7 @@
 
 <h1 align="center">Antigravity Provider +</h1>
 
-<p align="center">Turn Google Antigravity CLI into a native BB provider with persistent instructions, tip forking, manual compaction, low-to-max reasoning, and a live Swarm board.</p>
+<p align="center">Use Google Antigravity CLI in BB with built-in 5h/7d quota tracking, persistent instructions, tip forking, manual compaction, per-model reasoning, and a live Swarm board.</p>
 
 <p align="center">
   <a href="#why-use-this-instead-of-bbs-built-in-acp">Why not built-in ACP?</a> &middot;
@@ -38,17 +38,17 @@ Verified on macOS (BB Desktop + `agy 1.5.16`), Linux (`agy 1.5.14`), and Windows
 
 ## Screenshots
 
+### Antigravity thread workflow, `/compact`, and live model picker
+
+![Antigravity Provider + thread workflow, compaction, and model picker in BB](assets/screenshots/thread-workflow.png)
+
+### Built-in 5-hour and 7-day quota tracking
+
+![Antigravity Provider + usage windows in BB](assets/screenshots/usage.png)
+
 ### Live Swarm board and composer pill
 
 ![Swarm board tab and composer pill in BB](assets/screenshots/swarm-board.png)
-
-### Live CLI models and Low-to-Extra/Max reasoning picker
-
-![Antigravity Provider + model and reasoning picker in BB](assets/screenshots/model-picker.png)
-
-### Per-model-group quota tracking
-
-![Antigravity Provider + usage windows in BB](assets/screenshots/usage.png)
 
 ### Plain-English plugin settings
 

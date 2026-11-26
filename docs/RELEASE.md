@@ -12,9 +12,9 @@ This document defines the repeatable validation, release, and marketplace update
    - `npm test` (unit tests across proxy, fork, dialect, background tasks, subagents, maintenance, usage, Swarm reader, and provider contract)
    - `npm run check:release` (`scripts/check-release.mjs`), which enforces:
      - Runtime setting keys in `server.ts` match `README.md`, `SECURITY.md`, and `skills/antigravity-plus/SKILL.md`, with no retired setting names left behind.
-     - Display name, provider ID, version (`package.json` and `scripts/smoke.mjs`), repository URL, `LICENSE` author, and `assets/icon.svg` SHA-256 hash match `docs/marketplace-entry.template.json`.
+     - Display name, provider ID, version (`package.json` and `scripts/smoke.mjs`), repository URL, `LICENSE` author, `bb.description`, `keywords`, `bbMarketplace` (`category`, `secondaryCategories`, `screenshots`), and `assets/icon.svg` SHA-256 hash are valid and match `docs/marketplace-entry.template.json`.
      - `PLUGIN_OVERVIEW.md` stays at or under 4,000 characters, has no `# ` H1 title, no raw HTML, no tables, no images, HTTPS links only, zero em dashes, and zero banned marketplace buzzwords.
-     - Every marketplace screenshot exists in `assets/screenshots/`, is embedded in `README.md`, is at most 2 MiB, and is at least 1200 px wide (with no unreferenced leftover screenshots).
+     - Every screenshot in `package.json` `bbMarketplace.screenshots` exists in `assets/screenshots/`, is embedded in `README.md`, is at most 2 MiB, and is at least 1200 px wide (with no unreferenced leftover screenshots).
      - Zero local home paths (`/Users/...`, `/home/...`), personal email addresses, or stale upstream references in tracked files.
      - `npm pack --dry-run --ignore-scripts` contains all required entrypoints and excludes `.map`, `.env`, and scratch files.
    - `npm audit --audit-level=low`
@@ -49,38 +49,27 @@ Run these steps locally on a machine with BB and a signed-in `agy` CLI:
    - Capture tightly framed Retina images (`>= 1200px` wide, `<= 2 MiB` each) in a clean non-private workspace with empty margins, sidebars, and floating overlays removed so text stays readable inside BB's compact marketplace drawer.
    - Visually inspect every PNG before committing to confirm zero personal emails, local home paths, tokens, or unrelated thread titles.
    - Re-run `npm run check:release` to verify dimensions, file sizes, and `README.md` + `marketplace-entry.template.json` references.
-5. **Check commit identity and tag immutably:**
+5. **Check commit identity, tag immutably, and publish the GitHub Release:**
    ```sh
    git var GIT_AUTHOR_IDENT
    git status -s
    git tag -a vX.Y.Z -m "Release vX.Y.Z"
-   git push origin main --follow-tags
+   git push origin main vX.Y.Z
+   gh release create vX.Y.Z --title "vX.Y.Z" --latest --notes "<release notes>"
    ```
-   Never move a published tag. Cut a patch version for follow-up fixes.
+   Never move a published tag. Cut a patch version for follow-up fixes. Push the explicit `vX.Y.Z` tag (rather than `--follow-tags`) so older ancestor tags are not pushed unintentionally.
 
 ## 3. Updating the BB Community marketplace
 
-Recheck `README.md`, `schema/marketplace-v2.schema.json`, and `marketplace.base.json` on the default branch of [get-bb/marketplace](https://github.com/get-bb/marketplace) before submitting.
+`antigravity-plus` is self-published through the automated [get-bb/marketplace](https://github.com/get-bb/marketplace) crawler because this repository is public, is not a GitHub fork, and carries the `bb-plugin` GitHub topic and `package.json` keyword.
 
-A compatible release inside the existing `range` (such as `0.2.1` under `^0.2.0`) needs no marketplace PR unless you changed the display name, description, overview, icon, screenshots, tags, category, ownership, or version range.
+When you push a new semver tag (`vX.Y.Z`), the marketplace crawler reads the new tag within about 30 minutes and updates the live listing automatically from this repository:
 
-When a marketplace PR is needed, fork `get-bb/marketplace`, create a branch, and sync only these files:
+- `package.json` `bb.name` -> display name
+- `package.json` `bb.description` -> card description
+- `package.json` `bb.branding.icon` -> icon (`<= 256 KiB`)
+- `package.json` `keywords` -> search tags (up to 10 kebab-case tags after `bb-plugin` is stripped)
+- `package.json` `bbMarketplace` (`category`, `secondaryCategories`, `screenshots`) -> categories and screenshot gallery (first entry is the hero image; any unknown key or invalid screenshot skips the release update)
+- `PLUGIN_OVERVIEW.md` -> long-form listing overview (`<= 4000` chars)
 
-| Plugin checkout | Marketplace fork |
-| --- | --- |
-| `docs/marketplace-entry.template.json` | `entries/antigravity-plus.json` |
-| `assets/icon.svg` | `icons/antigravity-plus-<8-char-sha256>.svg` |
-| `PLUGIN_OVERVIEW.md` | `overview/antigravity-plus.md` |
-| `assets/screenshots/*.png` | `screenshots/antigravity-plus/*.png` |
-
-Validate inside the marketplace fork before opening the PR:
-
-```sh
-npm ci
-npm run build
-npm test
-npm run gate:v1
-npm run check
-```
-
-Commit only this plugin's entry, icon, overview, and screenshots, push your branch, and open the PR from `tymshe`.
+No pull request to `get-bb/marketplace` is needed for normal releases, copy updates, or screenshot refreshes. Recheck `scripts/crawl-lib.mjs` on [get-bb/marketplace](https://github.com/get-bb/marketplace) before changing `bbMarketplace` keys or category IDs. Open a PR to `get-bb/marketplace` only if you ever need to change legacy-only metadata outside the self-published contract. Keep `docs/marketplace-entry.template.json` synced as a checked reference snapshot.
