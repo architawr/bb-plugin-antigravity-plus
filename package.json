@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-antigravity-plus",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "license": "MIT",
   "author": "Tim Sherstyuk",
@@ -69,7 +69,7 @@
     "check": "tsc --noEmit",
     "check:release": "node --experimental-strip-types scripts/check-release.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node --experimental-strip-types scripts/smoke.mjs"
   },
   "dependencies": {
     "@get-bb/plugin-sdk": "0.6.157",

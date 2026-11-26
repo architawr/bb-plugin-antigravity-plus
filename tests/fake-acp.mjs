@@ -9,6 +9,85 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (m.method === 'session/prompt') {
     promptId = m.id;
     const promptText = Array.isArray(m.params?.prompt) ? m.params.prompt.map(p => p.text || '').join('\n') : '';
+    if (promptText.includes('phantom-stdout-test')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'fake-session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'phantom-call-1',
+            title: 'run_command',
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: { CommandLine: 'gh pr view 31', toolSummary: 'Read upstream PR #31' },
+          },
+        },
+      });
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'fake-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'phantom-call-1',
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'Command exited with code 0.\n\nCommand output:\nTool is running as a background task with task id: fake/phantom-1\nTask logs are available at: /tmp/phantom.log\n' } }],
+            rawOutput: { exit_code: 0, output: 'Command exited with code 0.\n\nCommand output:\nTool is running as a background task with task id: fake/phantom-1\nTask logs are available at: /tmp/phantom.log\n' },
+          },
+        },
+      });
+      for (const [sessionUpdate, text] of [
+        ['agent_message_chunk', 'phantom-before-thought'],
+        ['agent_thought_chunk', 'phantom-reasoning'],
+        ['agent_message_chunk', 'phantom-checked'],
+      ]) {
+        send({
+          jsonrpc: '2.0', method: 'session/update',
+          params: { sessionId: 'fake-session', update: { sessionUpdate, content: { type: 'text', text } } },
+        });
+      }
+      reply(promptId, { stopReason: 'end_turn' });
+      return;
+    }
+    if (promptText.includes('orphan-command-test')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'fake-session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'orphan-call-1',
+            title: 'run_command',
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: { CommandLine: 'npm run e2e', toolSummary: 'Run e2e suite' },
+          },
+        },
+      });
+      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fake-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'orphan-started' } } } });
+      reply(promptId, { stopReason: 'end_turn' });
+      setTimeout(() => {
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'fake-session',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'orphan-call-1',
+              status: 'completed',
+              content: [{ type: 'content', content: { type: 'text', text: 'Command exited with code 0.\n\nCommand output:\n42 passed\n' } }],
+              rawOutput: { exit_code: 0, output: 'Command exited with code 0.\n\nCommand output:\n42 passed\n' },
+            },
+          },
+        });
+      }, 150);
+      return;
+    }
     if (promptText.includes('sandbox-escape-test')) {
       send({
         jsonrpc: '2.0',
@@ -58,6 +137,21 @@ createInterface({ input: process.stdin }).on('line', line => {
     send({ jsonrpc: '2.0', id: 100, method: 'session/request_permission', params: { sessionId: 'fake-session', toolCall: { toolCallId: 'tool', title: 'Run command', kind: 'execute' }, options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Deny', kind: 'reject_once' }] } });
   }
   if ((m.id === 100 || m.id === 200 || m.id === 300) && m.result) {
+    if (m.id === 300) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'fake-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'escape-tool',
+            status: 'failed',
+            content: [{ type: 'content', content: { type: 'text', text: 'Command denied by user.' } }],
+          },
+        },
+      });
+    }
     if (m.id === 100) {
       send({
         jsonrpc: '2.0',

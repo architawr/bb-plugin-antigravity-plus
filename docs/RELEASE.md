@@ -4,7 +4,7 @@ This document defines the repeatable validation, release, and marketplace update
 
 ## 1. Automated CI checks (every PR and push)
 
-[`.github/workflows/checks.yml`](../.github/workflows/checks.yml) runs two read-only jobs on Ubuntu with Node 24:
+[`.github/workflows/checks.yml`](../.github/workflows/checks.yml) runs read-only checks on Ubuntu. The typecheck and test job runs on Node 22 and 24.
 
 1. **Typecheck, tests, and release gate:**
    - `npm ci --ignore-scripts`
@@ -30,10 +30,10 @@ Run these steps locally on a machine with BB and a signed-in `agy` CLI:
    ```sh
    bb plugin types .
    ```
-   Update `version` in `package.json`, `clientInfo.version` in `scripts/smoke.mjs`, and `range` in `docs/marketplace-entry.template.json` if crossing a major/minor floor.
+   Update `version` in `package.json` (`scripts/smoke.mjs` reads `manifest.version` automatically), and update `range` in `docs/marketplace-entry.template.json` if crossing a major/minor floor.
 2. **Run the full local gate:**
    ```sh
-   npm run check && npm test && npm run build && npm run check:release && npm run smoke -- --modes
+   bb plugin types --check . && npm run check && npm test && npm run build && npm run check:release && npm run smoke -- --modes
    ```
 3. **Install locally into BB and verify live surfaces:**
    ```sh

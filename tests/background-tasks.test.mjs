@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createBackgroundTaskTracker, normalizeFileUri, deriveTranscriptPathFromLogFile, extractToolOutputText } from '../background-tasks.ts';
@@ -411,4 +411,429 @@ test('silent-turn tracking is isolated per thread', t => {
   assert.doesNotMatch(bFirst.text, /broken in this session/);
   const aSecond = injectedMessage(stdout(tr, 'a', failedEmptyCommand(), boundary()));
   assert.match(aSecond.text, /broken in this session/);
+});
+
+test('retries failed task-state writes without overwriting a same-millisecond replacement (#38 & v0.1.8)', async t => {
+  const { mkdtempSync, rmSync, readFileSync, writeFileSync, chmodSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'agp-bg-retry-'));
+  t.after(() => {
+    try { chmodSync(dir, 0o700); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const statePath = join(dir, 'background-tasks.json');
+  const realNow = Date.now;
+  const fixedNow = realNow();
+  Date.now = () => fixedNow;
+  try {
+    const tr1 = tracker(t, { persistPath: statePath });
+    const tr2 = tracker(t, { persistPath: statePath });
+
+    // Force tr1's first persistence attempt to fail via a stale-free active lockfile held temporarily.
+    writeFileSync(`${statePath}.lock`, 'held');
+    tr1.handleToolEventForThread('thr_handoff', {
+      toolCallId: 'call_old',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { toolSummary: 'Old task' },
+      rawOutput: 'Tool is running as a background task with task id: shared-task',
+    });
+    // Release the lock and let tr2 save a replacement at the exact same millisecond with a new parentToolCallId.
+    rmSync(`${statePath}.lock`, { force: true });
+    tr2.handleToolEventForThread('thr_handoff', {
+      toolCallId: 'call_new',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { toolSummary: 'Replacement task' },
+      rawOutput: 'Tool is running as a background task with task id: shared-task',
+    });
+
+    // Trigger tr1 to flush its pendingWrites retry (by registering a second unrelated task).
+    tr1.handleToolEventForThread('thr_other', {
+      toolCallId: 'call_other',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { toolSummary: 'Other task' },
+      rawOutput: 'Tool is running as a background task with task id: other-task',
+    });
+
+    const saved = JSON.parse(readFileSync(statePath, 'utf8'));
+    const handoffRecord = saved.tasks.find(r => r.threadId === 'thr_handoff' && r.taskId === 'shared-task');
+    assert.ok(handoffRecord, 'replacement record should exist');
+    assert.equal(handoffRecord.parentToolCallId, 'call_new');
+    assert.equal(handoffRecord.description, 'Replacement task');
+    assert.ok(saved.tasks.some(r => r.threadId === 'thr_other' && r.taskId === 'other-task'));
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('coordinates concurrent host processes sharing background-tasks.json without losing writes (#32)', async t => {
+  const { mkdtempSync, rmSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawn } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const dir = mkdtempSync(join(tmpdir(), 'agp-bg-concurrent-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'background-tasks.json');
+  const moduleUrl = new URL('../background-tasks.ts', import.meta.url).href;
+
+  const runWorker = (workerName) => new Promise((resolve, reject) => {
+    const script = `
+      import { createBackgroundTaskTracker } from ${JSON.stringify(moduleUrl)};
+      const tr = createBackgroundTaskTracker({ persistPath: ${JSON.stringify(statePath)}, pollIntervalMs: 0 });
+      for (let i = 0; i < 12; i += 1) {
+        tr.handleToolEventForThread(${JSON.stringify(workerName)} + '-' + i, {
+          toolCallId: 'call-' + i,
+          title: 'run_command',
+          status: 'completed',
+          rawInput: { toolSummary: 'Work ' + i },
+          rawOutput: 'Tool is running as a background task with task id: task-' + i,
+        });
+      }
+      tr.dispose();
+    `;
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    child.on('exit', code => code === 0 ? resolve() : reject(new Error(`worker ${workerName} exited ${code}: ${stderr}`)));
+  });
+
+  await Promise.all([runWorker('hostA'), runWorker('hostB')]);
+  const saved = JSON.parse(readFileSync(statePath, 'utf8'));
+  const threadIds = new Set(saved.tasks.map(r => r.threadId));
+  for (let i = 0; i < 12; i += 1) {
+    assert.ok(threadIds.has(`hostA-${i}`), `missing hostA-${i}`);
+    assert.ok(threadIds.has(`hostB-${i}`), `missing hostB-${i}`);
+  }
+});
+
+test('drains large transcript bursts in bounded chunks and still settles late completions (#33)', async t => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'agp-bg-bounded-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const tasksDir = join(dir, '.system_generated', 'tasks');
+  const logsDir = join(dir, '.system_generated', 'logs');
+  mkdirSync(tasksDir, { recursive: true });
+  mkdirSync(logsDir, { recursive: true });
+  const logFile = join(tasksDir, 'task-burst.log');
+  const transcript = join(logsDir, 'transcript.jsonl');
+  writeFileSync(transcript, '');
+
+  const settled = [];
+  const tr = tracker(t, {
+    pollIntervalMs: 25,
+    maxTranscriptReadBytes: 2048,
+    onAsyncDeltas: (_threadId, deltas) => settled.push(...deltas),
+  });
+  tr.handleToolEventForThread('thr_burst', {
+    toolCallId: 'call_burst',
+    title: 'run_command',
+    status: 'completed',
+    rawInput: { toolSummary: 'Long build' },
+    rawOutput: `Tool is running as a background task with task id: burst-1\nTask logs are available at: ${logFile}`,
+  });
+
+  // Append >20 KiB of noisy lines followed by the completion announcement so multiple bounded reads are required.
+  const noiseLine = `${JSON.stringify({ content: 'x'.repeat(1500) })}\n`;
+  appendFileSync(
+    transcript,
+    noiseLine.repeat(16) +
+      `${JSON.stringify({ content: 'Task id "burst-1" finished with result:\nCommand exited with code 0' })}\n`,
+  );
+
+  const deadline = Date.now() + 2000;
+  while (!settled.length && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].kind, 'item.close');
+  assert.equal(settled[0].status, 'completed');
+  assert.equal(tr.getActiveTasks('thr_burst').length, 0);
+});
+
+test('ignores background-task strings appearing inside ordinary command stdout and persists nothing', t => {
+  const path = statePath(t);
+  const tr = tracker(t, { persistPath: path });
+  const phantomSamples = [
+    // Real captured PR #31 description printed by `gh pr view`
+    {
+      toolCallId: 'call_gh_pr',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'gh pr view 31', toolSummary: 'Read upstream PR #31' },
+      content: [{ type: 'text', text: 'Command exited with code 0.\n\nCommand output:\nCase 1: `run_command` returns `Tool is running as a background task with task id: …` (already tracked).\n' }],
+      rawOutput: { exit_code: 0, output: 'Command exited with code 0.\n\nCommand output:\nCase 1: `run_command` returns `Tool is running as a background task with task id: …` (already tracked).\n' },
+    },
+    // Real captured source code / git diff of background-tasks.ts
+    {
+      toolCallId: 'call_git_diff',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'git diff background-tasks.ts', toolSummary: 'Inspect background-tasks diff' },
+      content: [{ type: 'text', text: '+const id = /Tool is running as a background task with task id:[ \\t]*([^\\s\\r\\n][^\\r\\n]*)/.exec(text)?.[1], /Background command ID:[ \\t]*([^\\s\\r\\n][^\\r\\n]*)/.exec(text)?.[1];\n+const outputFile = /Task logs are available at:[ \\t]*([^\\s\\r\\n][^\\r\\n]*)/.exec(text)?.[1];\n' }],
+    },
+    // Real captured transcript search output containing an older task header mid-stdout
+    {
+      toolCallId: 'call_transcript_search',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'python3 search_transcript.py', toolSummary: 'Search transcript' },
+      content: [{ type: 'text', text: '122 MODEL PLANNER_RESPONSE\n123 MODEL GENERIC Created At: 2026-11-22T12:46:19+01:00\nTool is running as a background task with task id: 0c200d48-3c60-487c-a227-27311f641272/task-123\nTask Description: bb thread list\n' }],
+    },
+    // Real captured JSON dump of background-tasks.json
+    {
+      toolCallId: 'call_cat_state',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'cat background-tasks.json', toolSummary: 'Inspect task state' },
+      content: [{ type: 'text', text: '{"version":1,"tasks":[{"taskId":"fake/task-1","note":"Background command ID: escaped\\\\nline"}]}' }],
+    },
+    // Exited command whose raw stdout happens to start with a valid-looking background header
+    {
+      toolCallId: 'call_echo_header',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'echo "Tool is running as a background task with task id: conv/fake"', toolSummary: 'Echo header' },
+      content: [{ type: 'text', text: 'Tool is running as a background task with task id: conv/fake\n' }],
+      rawOutput: { exit_code: 0, output: 'Tool is running as a background task with task id: conv/fake\n' },
+    },
+    // Same with stringified exit_code
+    {
+      toolCallId: 'call_echo_header_str_exit',
+      title: 'run_command',
+      status: 'completed',
+      rawInput: { CommandLine: 'echo "Tool is running as a background task with task id: conv/fake2"', toolSummary: 'Echo header string exit' },
+      content: [{ type: 'text', text: 'Tool is running as a background task with task id: conv/fake2\n' }],
+      rawOutput: { exit_code: '0', output: 'Tool is running as a background task with task id: conv/fake2\n' },
+    },
+  ];
+
+  for (const sample of phantomSamples) {
+    assert.deepEqual(tr.handleToolEventForThread('thr_phantom', sample), [], `should ignore phantom ${sample.toolCallId}`);
+  }
+  assert.equal(tr.getActiveTasks('thr_phantom').length, 0);
+  assert.equal(existsSync(path), false);
+
+  // Positive control: genuine anchored agy background-task wrapper (with optional Created At header) still registers.
+  const realDeltas = tr.handleToolEventForThread('thr_phantom', {
+    toolCallId: 'call_real_bg',
+    title: 'run_command',
+    status: 'completed',
+    rawInput: { CommandLine: 'npm run build', toolSummary: 'Build bundle' },
+    content: [{
+      type: 'text',
+      text: 'Created At: 2026-11-26T09:09:14+01:00\nTool is running as a background task with task id: 9a6a33d2-0afa-4caa-9e67-30de71f632d5/task-1898\nTask Description: Build bundle\nTask logs are available at: file:///tmp/.system_generated/tasks/task-1898.log\nLog output:\nTask logs are available at: /fake/spoofed.log\n',
+    }],
+  });
+  assert.equal(realDeltas.length, 1);
+  assert.equal(realDeltas[0].item.familyId, '9a6a33d2-0afa-4caa-9e67-30de71f632d5/task-1898');
+  assert.equal(realDeltas[0].item.outputFile, '/tmp/.system_generated/tasks/task-1898.log');
+  assert.equal(tr.getActiveTasks('thr_phantom').length, 1);
+});
+
+test('tracks orphan run_command left in progress at turn end without holding the turn boundary', t => {
+  const path = statePath(t);
+  const tr = tracker(t, { persistPath: path });
+  const call = 'call:e2e';
+  const openCmd = {
+    kind: 'item.open',
+    key: { providerItemId: call },
+    item: { type: 'command', command: 'npm run e2e', cwd: '' },
+    noTurnFallback: {
+      raw: {
+        params: {
+          update: {
+            toolCallId: call,
+            title: 'run_command',
+            status: 'in_progress',
+            rawInput: { CommandLine: 'npm run e2e', toolSummary: 'Run e2e suite' },
+          },
+        },
+      },
+    },
+  };
+  stdout(tr, 't', openCmd);
+
+  // Bridge force-closes the still-running call on prompt end_turn and emits turn.boundary.
+  const flushed = stdout(
+    tr,
+    't',
+    { kind: 'item.close', status: 'completed', key: { providerItemId: call }, item: { type: 'command', command: 'npm run e2e', cwd: '' } },
+    boundary(),
+  );
+  assert.ok(flushed.some(d => d.kind === 'turn.boundary' && d.status === 'completed'), 'turn boundary must pass through unheld');
+  const bgOpen = flushed.find(d => d.item?.type === 'backgroundTask' && d.kind === 'item.open');
+  assert.ok(bgOpen, 'orphan background banner should open');
+  assert.equal(bgOpen.item.familyId, call);
+  assert.equal(bgOpen.item.description, 'Run e2e suite');
+  assert.equal(bgOpen.key.parentRef, call);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks.map(r => r.taskId), [call], 'orphan must persist while active');
+
+  assert.deepEqual(tr.handleToolEventForThread('t', manage('manage_task', 'list', {}, 'No running tasks')), []);
+  assert.equal(tr.getActiveTasks('t').length, 1, 'CLI task listing cannot see a synthetic orphan');
+
+  // Flood >140 unrelated tool calls to confirm MAX_RETAINED_TOOLS_PER_THREAD preserves active orphan metadata.
+  for (let i = 0; i < 140; i += 1) {
+    const id = `call:noise-${i}`;
+    stdout(tr, 't', {
+      kind: 'item.close',
+      status: 'completed',
+      key: { providerItemId: id },
+      noTurnFallback: { raw: { params: { update: { toolCallId: id, title: 'read_file', status: 'completed', rawOutput: 'ok' } } } },
+    });
+  }
+
+  // Late updates settle the orphan and remove its state record.
+  for (const commandOutput of [
+    '42 passed\nCommand exited with code 1.',
+    '42 passed\n' + 'x'.repeat(5000),
+  ]) {
+    if (!tr.getActiveTasks('t').length) {
+      stdout(tr, 't', openCmd, { kind: 'item.close', status: 'completed', key: { providerItemId: call } }, boundary());
+    }
+    const wrappedOutput = `Created At: 2026-11-26T09:09:14+01:00\nCommand output:\n${commandOutput}`;
+    const update = {
+      toolCallId: call,
+      title: 'run_command',
+      status: 'completed',
+      content: [{ type: 'text', text: wrappedOutput }],
+      rawOutput: { exit_code: 0, output: wrappedOutput },
+    };
+    const settled = stdout(tr, 't', {
+      kind: 'item.close',
+      status: 'completed',
+      key: { providerItemId: call },
+      noTurnFallback: { raw: { params: { update } } },
+    });
+    const bgClose = settled.find(d => d.item?.type === 'backgroundTask' && d.kind === 'item.close');
+    assert.ok(bgClose);
+    assert.equal(bgClose.status, 'completed');
+    assert.equal(bgClose.item.summary, commandOutput.slice(0, 4096));
+    assert.equal(tr.getActiveTasks('t').length, 0);
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks, []);
+  }
+
+  stdout(tr, 'limited', openCmd);
+  const stopped = stdout(
+    tr,
+    'limited',
+    { kind: 'item.close', status: 'completed', key: { providerItemId: call } },
+    { kind: 'provider.warning', summary: 'The agent reached its output limit' },
+    boundary(),
+  );
+  assert.equal(stopped.some(d => d.item?.type === 'backgroundTask'), false);
+  assert.deepEqual(tr.getActiveTasks('limited'), []);
+
+  // thread/compact also reconciles persisted tasks left behind after a host restart.
+  stdout(tr, 'c', openCmd);
+  stdout(tr, 'c', { kind: 'item.close', status: 'completed', key: { providerItemId: call } }, boundary());
+  tr.dispose();
+  const restarted = tracker(t, { persistPath: path });
+  const compactClosed = restarted.handleInboundRequest({ method: 'thread/compact', params: { threadId: 'c' } });
+  assert.equal(compactClosed.length, 1);
+  assert.equal(compactClosed[0].status, 'interrupted');
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks, []);
+
+  // Failing late result and non-command / interrupted flushes.
+  const tr2 = tracker(t);
+  stdout(tr2, 'f', openCmd);
+  stdout(tr2, 'f', { kind: 'item.close', status: 'completed', key: { providerItemId: call } }, boundary());
+  const failed = stdout(tr2, 'f', {
+    kind: 'item.close',
+    status: 'failed',
+    key: { providerItemId: call },
+    noTurnFallback: { raw: { params: { update: { toolCallId: call, title: 'run_command', status: 'completed', content: 'Command exited with code 2' } } } },
+  });
+  assert.equal(failed.find(d => d.item?.type === 'backgroundTask')?.status, 'failed');
+
+  stdout(tr2, 'n', { kind: 'item.open', key: { providerItemId: 'read' }, noTurnFallback: { raw: { params: { update: { toolCallId: 'read', title: 'view_file', status: 'in_progress', rawInput: { Path: 'a' } } } } } });
+  stdout(tr2, 'n', { kind: 'item.close', status: 'completed', key: { providerItemId: 'read' } }, boundary());
+  assert.equal(tr2.getActiveTasks('n').length, 0);
+
+  stdout(tr2, 'i', openCmd);
+  stdout(tr2, 'i', { kind: 'item.close', status: 'interrupted', key: { providerItemId: call } });
+  assert.equal(tr2.getActiveTasks('i').length, 0);
+});
+
+test('startup leaves missing and healthy persisted state untouched', t => {
+  const path = join(dirname(statePath(t)), 'absent', 'background-tasks.json');
+  tracker(t, { persistPath: path });
+  assert.equal(existsSync(dirname(path)), false);
+
+  mkdirSync(dirname(path));
+  const contents = '  {"version":1,"tasks":[]}  ';
+  writeFileSync(path, contents);
+  tracker(t, { persistPath: path });
+  assert.equal(readFileSync(path, 'utf8'), contents);
+});
+
+test('dispose retries a pending settlement after a lock race', t => {
+  const path = statePath(t);
+  const tr = tracker(t, { persistPath: path });
+  tr.handleToolEventForThread('t', command('task-1'));
+  writeFileSync(`${path}.lock`, 'held');
+  assert.equal(tr.clearThread('t', true).length, 1);
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).tasks.length, 1);
+  rmSync(`${path}.lock`);
+  tr.dispose();
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks, []);
+});
+
+test('a failed state rename removes its temporary file', t => {
+  const path = statePath(t);
+  mkdirSync(path);
+  const tr = tracker(t, { persistPath: path });
+  tr.handleToolEventForThread('t', command('task-1'));
+  assert.deepEqual(readdirSync(dirname(path)), ['background-tasks.json']);
+  tr.dispose();
+  assert.deepEqual(readdirSync(dirname(path)), ['background-tasks.json']);
+});
+
+test('pending events for one tool retain the latest 32 in order', t => {
+  const tr = tracker(t);
+  for (let i = 0; i < 80; i += 1) {
+    tr.recordToolEvent(command(`task-${i}`, { toolCallId: 'same-call' }));
+  }
+  const events = Array.from({ length: 33 }, () => ({
+    kind: 'item.close', status: 'completed', key: { providerItemId: 'same-call' },
+  }));
+  const opens = stdout(tr, 't', ...events).filter(d => d.item?.type === 'backgroundTask');
+  assert.deepEqual(opens.map(d => d.item.familyId),
+    Array.from({ length: 32 }, (_, i) => `task-${48 + i}`));
+});
+
+test('polling settles a task announced at the start of an oversized transcript line', async t => {
+  const dir = dirname(statePath(t));
+  const generated = join(dir, '.system_generated');
+  const logs = join(generated, 'logs');
+  mkdirSync(logs, { recursive: true });
+  const transcript = join(logs, 'transcript.jsonl');
+  writeFileSync(transcript, '');
+  const settled = [];
+  const tr = tracker(t, {
+    pollIntervalMs: 5,
+    maxTranscriptReadBytes: 16 * 1024,
+    onAsyncDeltas: (_thread, deltas) => settled.push(...deltas),
+  });
+  tr.handleToolEventForThread('t', command('conv/task-1', {
+    content: `Background command ID: conv/task-1\nTask logs are available at: ${join(generated, 'tasks', 'task-1.log')}`,
+  }));
+  appendFileSync(transcript, JSON.stringify({
+    text: 'Task id "conv/task-1" finished with result: ' + 'x'.repeat(350 * 1024) + 'tail-marker',
+  }) + '\n');
+  for (let i = 0; i < 80 && !settled.length; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].status, 'completed');
+  assert.match(settled[0].item.summary, /tail-marker/);
 });

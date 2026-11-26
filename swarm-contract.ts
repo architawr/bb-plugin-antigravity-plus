@@ -28,6 +28,11 @@ export const swarmMessageSchema = z
 
 export type SwarmMessage = z.infer<typeof swarmMessageSchema>;
 
+export function swarmMentionPattern(agent: string): RegExp {
+  const escaped = agent.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+  return new RegExp(String.raw`(?<![\p{L}\p{N}_@-])@${escaped}(?![\p{L}\p{N}_-])`, "u");
+}
+
 export const swarmPlanThreadSchema = z
   .object({
     id: z.string(),

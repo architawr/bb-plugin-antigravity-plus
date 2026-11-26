@@ -12,6 +12,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import {
   swarmRpcContract,
+  swarmMentionPattern,
   type SwarmMember,
   type SwarmMessage,
 } from "./swarm-contract.ts";
@@ -182,8 +183,9 @@ function SwarmBoardTab({ threadId }: ExperimentalThreadTabProps) {
 
   const visibleMessages = useMemo(() => {
     const raw = data?.messages ?? [];
-    const filtered = selectedAgent
-      ? raw.filter((msg) => msg.agent === selectedAgent || msg.text.includes(`@${selectedAgent}`))
+    const mention = selectedAgent ? swarmMentionPattern(selectedAgent) : null;
+    const filtered = mention
+      ? raw.filter((msg) => msg.agent === selectedAgent || mention.test(msg.text))
       : raw;
     return newestFirst ? [...filtered].reverse() : filtered;
   }, [data?.messages, selectedAgent, newestFirst]);

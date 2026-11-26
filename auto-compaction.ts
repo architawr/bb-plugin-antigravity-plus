@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveAgyAppDataDir } from "./agy-fork.ts";
-import { BB_ANTIGRAVITY_APP_DATA_DIR_ENV, BB_ANTIGRAVITY_GEMINI_DIR_ENV } from "./cli.ts";
+import { resolveAntigravityProfileArgs } from "./cli.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_MAX_READ_BYTES = 256 * 1024;
@@ -80,26 +80,7 @@ function extractLaunchAppDataDir(parsed: unknown, home: string): string {
     ...(options?.envVars && typeof options.envVars === "object" ? options.envVars : undefined),
   };
 
-  const normalizedArgs = [...args];
-  const hasFlag = (names: readonly string[]) =>
-    normalizedArgs.some(arg => names.some(name => arg === name || arg.startsWith(`${name}=`)));
-
-  const geminiDir =
-    typeof mergedEnv[BB_ANTIGRAVITY_GEMINI_DIR_ENV] === "string"
-      ? mergedEnv[BB_ANTIGRAVITY_GEMINI_DIR_ENV].trim()
-      : "";
-  if (geminiDir && !hasFlag(["--gemini-dir", "--gemini_dir"])) {
-    normalizedArgs.push("--gemini-dir", geminiDir);
-  }
-  const appDataDir =
-    typeof mergedEnv[BB_ANTIGRAVITY_APP_DATA_DIR_ENV] === "string"
-      ? mergedEnv[BB_ANTIGRAVITY_APP_DATA_DIR_ENV].trim()
-      : "";
-  if (appDataDir && !hasFlag(["--app-data-dir", "--app_data_dir"])) {
-    normalizedArgs.push("--app-data-dir", appDataDir);
-  }
-
-  return resolveAgyAppDataDir(normalizedArgs, home);
+  return resolveAgyAppDataDir([...args, ...resolveAntigravityProfileArgs(mergedEnv, args)], home);
 }
 
 function defaultTranscriptPath(providerThreadId: string, appDataDir: string): string {
@@ -337,6 +318,10 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
     } catch {
       return line;
     }
+    return processStdoutMessage(message) ? JSON.stringify(message) : line;
+  }
+
+  function processStdoutMessage(message: any): boolean {
     const params = message?.params;
     if (
       (message?.method === "thread/identity" || message?.method === "session/replaced") &&
@@ -345,10 +330,10 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
     ) {
       const state = getOrCreateState(params.threadId);
       bindProviderThread(state, params.providerThreadId);
-      return line;
+      return false;
     }
     if (message?.method !== "thread/delta" || typeof params?.threadId !== "string" || !Array.isArray(params.deltas)) {
-      return line;
+      return false;
     }
 
     const threadId: string = params.threadId;
@@ -377,13 +362,13 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
       }
     }
 
-    if (!state) return line;
+    if (!state) return false;
 
     if (hasBridgeCompacted) {
       // Manual compaction already emitted by BB's ACP bridge: absorb the transcript checkpoint silently.
       state.manualCompactionInFlight = false;
       scanNewCheckpoints(state, true);
-      return line;
+      return false;
     }
 
     if (state.manualCompactionInFlight) {
@@ -391,22 +376,17 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
         state.manualCompactionInFlight = false;
         scanNewCheckpoints(state, true);
       }
-      return line;
+      return false;
     }
 
-    if (!hasTriggerDelta || !state.transcriptPath) return line;
+    if (!hasTriggerDelta || !state.transcriptPath) return false;
 
     const checkpoints = scanNewCheckpoints(state, false);
-    if (checkpoints.length === 0) return line;
+    if (checkpoints.length === 0) return false;
 
     const injected = checkpoints.flatMap(cp => buildAutoCompactionDeltas(cp, postUsedTokens));
-    return JSON.stringify({
-      ...message,
-      params: {
-        ...params,
-        deltas: [...injected, ...deltas],
-      },
-    });
+    params.deltas = [...injected, ...deltas];
+    return true;
   }
 
   function dispose(): void {
@@ -416,6 +396,7 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
   return {
     handleInboundRequest,
     processStdoutLine,
+    processStdoutMessage,
     dispose,
   };
 }

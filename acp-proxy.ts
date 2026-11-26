@@ -42,7 +42,7 @@
  *   (it has no `acp` subcommand) the proxy's "run agy update" explanation leads the error bb shows.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { forkAgyConversation, resolveAgyAppDataDir, type SqliteDatabaseClass } from "./agy-fork.ts";
@@ -89,12 +89,13 @@ export function createInstructionStore(dir: string | undefined, log: (message: s
       memory.set(sessionId, instructions);
       const file = fileFor(sessionId);
       if (!file || !dir) return;
+      const temp = `${file}.${process.pid}.tmp`;
       try {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
-        const temp = `${file}.${process.pid}.tmp`;
         writeFileSync(temp, `${JSON.stringify({ version: 1, instructions })}\n`, { mode: 0o600 });
         renameSync(temp, file);
       } catch (error) {
+        try { unlinkSync(temp); } catch { /* Best effort. */ }
         log(`could not persist instructions for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     },

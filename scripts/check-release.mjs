@@ -97,8 +97,12 @@ if (entry.id !== registeredProvider?.id) {
 if (pkg.repository?.url !== entry.source?.git?.url) {
   fail(`package.json repository.url (${pkg.repository?.url}) !== marketplace source.git.url (${entry.source?.git?.url})`);
 }
-if (!smokeSrc.includes(`version: '${pkg.version}'`) && !smokeSrc.includes(`version: "${pkg.version}"`)) {
-  fail(`scripts/smoke.mjs clientInfo.version does not match package.json version (${pkg.version})`);
+if (
+  !smokeSrc.includes("version: manifest.version") &&
+  !smokeSrc.includes(`version: '${pkg.version}'`) &&
+  !smokeSrc.includes(`version: "${pkg.version}"`)
+) {
+  fail(`scripts/smoke.mjs clientInfo.version does not use manifest.version or match package.json version (${pkg.version})`);
 }
 if (!license.includes(pkg.author)) {
   fail(`LICENSE does not include package.json author "${pkg.author}"`);

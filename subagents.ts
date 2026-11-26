@@ -72,11 +72,14 @@ export function createSubagentController(options: { replyToBridge?: (line: strin
   function interceptSubagentApproval(line: string): boolean {
     let message: any;
     try { message = JSON.parse(line); } catch { return false; }
+    return interceptSubagentApprovalMessage(message);
+  }
+  function interceptSubagentApprovalMessage(message: any): boolean {
     if (!isBlockedSubagentApproval(message) || !options.replyToBridge) return false;
     options.replyToBridge(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { decision: "deny", grantedPermissions: null } }));
     return true;
   }
-  return { rememberAndTransformRequest, isSubagentsDisabled, isSubagentApprovalForDisabledThread, isBlockedSubagentApproval, interceptSubagentApproval, clearThread };
+  return { rememberAndTransformRequest, isSubagentsDisabled, isSubagentApprovalForDisabledThread, isBlockedSubagentApproval, interceptSubagentApproval, interceptSubagentApprovalMessage, clearThread };
 }
 
 const defaultController = createSubagentController({ replyToBridge: line => queueMicrotask(() => experimental_acpProviderBridge.handleLine(line)) });
@@ -85,3 +88,4 @@ export const transformSubagentRequest = defaultController.rememberAndTransformRe
 export const isSubagentsDisabled = defaultController.isSubagentsDisabled;
 export const isSubagentApprovalForDisabledThread = defaultController.isSubagentApprovalForDisabledThread;
 export const interceptSubagentApproval = defaultController.interceptSubagentApproval;
+export const interceptSubagentApprovalMessage = defaultController.interceptSubagentApprovalMessage;

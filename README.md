@@ -34,7 +34,7 @@ Verified on macOS (BB Desktop + `agy 1.5.16`), Linux (`agy 1.5.14`), and Windows
 | Command cards and sandbox safety | Raw shell strings, noisy timestamps, no escape guard | `toolSummary` titles, clean output + exit codes, **Outside of sandbox** badges, and sandbox-escape guard in Accept edits mode |
 | Background commands and subagents | Silent until completion | Live BB background task banner with restart recovery, plus optional `subagentsDisabled` toggle to delegate via BB child threads |
 | Session stability and model loading | Shared CLI worker, per-workspace catalog probe | `--process-per-session` enabled by default, host-scoped model cache, and macOS BB Desktop `ELECTRON_RUN_AS_NODE=1` fix |
-| Onboarding, skills, and quota | Manual setup and manual CLI checks | Auth-aware health check (`agy acp --login`), live CLI version checks and one-click Install / Update, `.agents/skills` + `antigravity:` builtin skills in BB's picker, and per-model quota windows |
+| Onboarding, skills, and quota | Manual setup and manual CLI checks | Auth-aware health check (`agy acp --login`), live CLI version checks and one-click Install / Update, personal and workspace skills in BB's picker, and per-model quota windows |
 
 ## Screenshots
 
@@ -83,10 +83,10 @@ Manual compaction wires BB's Compact button and `bb thread compact` to Antigravi
 - **Clean command cards and background banners.** Shows Antigravity's `toolSummary` as the command card title, strips wrapper timestamps, extracts exit codes, marks out-of-sandbox calls with a destructive **Outside of sandbox** badge, and tracks backgrounded commands, timers, and subagents in BB's background task banner across restarts.
 - **Optional BB-thread delegation.** Turning on `subagentsDisabled` instructs Antigravity to spawn BB child threads (`bb thread spawn --parent-self`) instead of native subagents and denies native subagent tool approvals.
 
-### Clear onboarding, builtin skills, and quota windows
+### Clear onboarding, skills, and quota windows
 
 - **Auth-aware health, live update checks, and install.** Provider health checks detect missing `agy`, flag versions below `1.5.0`, verify sign-in via a zero-turn `/usage` probe without spending tokens, direct signed-out users to `agy acp --login`, check the latest published CLI release in **Settings -> Updates** via Google's official installer manifest, and wire BB's native **Install** and **Update** (`agy update`) actions.
-- **Distinguished builtin and cross-agent skills.** Indexes `.gemini/antigravity-cli/builtin/skills` with the `antigravity:` prefix alongside your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`, `.agents/skills`) and workspace (`.agents/skills`, `.agent/skills`) roots in BB's picker, preserving Antigravity-specific precedence over `.agents/skills`.
+- **Clean user and workspace skill discovery.** Indexes your personal (`.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`, `.agents/skills`) and workspace (`.agents/skills`, `.agent/skills`) roots in BB's picker, preserving Antigravity-specific precedence over `.agents/skills` while leaving CLI-internal prompts to `agy` itself.
 - **Per-model-group quota tracking.** Reports 5-hour and 7-day usage windows (`Gemini`, `Claude/GPT`, `Argon`) to BB's Usage dashboard and settings through `provider/usage` and `provider-usage.v1`.
 - **Profile isolation and auto-compaction override.** Passes `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`) through `env.passthrough`, and surfaces automatic Antigravity compactions as native **Compacted context** items in BB's thread timeline.
 
@@ -183,9 +183,11 @@ Requires Node.js 22.18+ or Node.js 24.
 
 ```sh
 npm ci --ignore-scripts
+bb plugin types --check .
 npm run check
 npm test
 npm run build
+npm run check:release
 npm run smoke -- --modes
 npm pack --dry-run --ignore-scripts
 ```

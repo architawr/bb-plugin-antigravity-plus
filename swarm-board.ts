@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveAgyAppDataDir } from "./agy-fork.ts";
-import { BB_ANTIGRAVITY_APP_DATA_DIR_ENV, BB_ANTIGRAVITY_GEMINI_DIR_ENV } from "./cli.ts";
+import { resolveAntigravityProfileArgs } from "./cli.ts";
 import {
   emptySwarmBoardSnapshot,
   type SwarmBoardSnapshot,
@@ -26,12 +26,7 @@ export interface ReadSwarmBoardOptions {
 export function resolveSwarmAppDataDir(options?: ReadSwarmBoardOptions): string {
   if (options?.appDataDir) return options.appDataDir;
   const env = options?.env ?? process.env;
-  const args: string[] = [];
-  const geminiDir = env[BB_ANTIGRAVITY_GEMINI_DIR_ENV]?.trim();
-  if (geminiDir) args.push("--gemini-dir", geminiDir);
-  const appDataDir = env[BB_ANTIGRAVITY_APP_DATA_DIR_ENV]?.trim();
-  if (appDataDir) args.push("--app-data-dir", appDataDir);
-  return resolveAgyAppDataDir(args, options?.home ?? homedir());
+  return resolveAgyAppDataDir(resolveAntigravityProfileArgs(env), options?.home ?? homedir());
 }
 
 /** Reads a JSON file only if its size fits within maxBytes; never tail-slices a JSON object. */

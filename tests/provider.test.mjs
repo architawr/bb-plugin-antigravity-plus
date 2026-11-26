@@ -95,11 +95,12 @@ test('deriveProviderOptions always isolates sessions and maps approval and sandb
     );
   }
   assert.ok(provider.experimental_nativeSkillRoots.user.includes('.gemini/antigravity-cli/skills'));
-  assert.ok(provider.experimental_nativeSkillRoots.user.some(
-    root => typeof root === 'object' && root.path === '.gemini/antigravity-cli/builtin/skills' && root.namePrefix === 'antigravity:'
-  ));
   const userRootPaths = provider.experimental_nativeSkillRoots.user.map(
     root => (typeof root === 'string' ? root : root.path)
+  );
+  assert.ok(
+    !userRootPaths.includes('.gemini/antigravity-cli/builtin/skills'),
+    'internal CLI builtin/skills must stay internal to agy so /swarm and internal worker prompts do not duplicate in BB Skills'
   );
   assert.ok(userRootPaths.includes('.gemini/config/skills'));
   assert.ok(userRootPaths.includes('.agents/skills'));
@@ -120,4 +121,56 @@ test('deriveProviderOptions always isolates sessions and maps approval and sandb
     'BB_AGY_ACP_PROXY',
     'AGY_CLI_AUTO_COMPACT_OVERRIDE',
   ]);
+});
+
+test('Swarm board refreshes its target after the thread timeline changes', async () => {
+  const events = new Map();
+  const called = [];
+  const invalidations = [];
+  let handlers;
+  let identityReads = 0;
+  let providerThreadId = 'original-session';
+  const thread = { id: 't', providerId: 'antigravity-plus' };
+  await plugin({
+    settings: { define() { return {}; } },
+    providers: { register() {} },
+    hosts: {
+      experimental_client() {
+        return {
+          async call(_method, params, { hostId }) {
+            called.push({ ...params, hostId });
+            return {};
+          },
+        };
+      },
+    },
+    rpc: {
+      register(contract, registered) {
+        if (registered.getSwarmBoard) handlers = registered;
+      },
+      experimental_invalidate(keys) { invalidations.push(keys); },
+    },
+    events: { on(event, handler) { events.set(event, handler); } },
+    sdk: {
+      threads: {
+        async get() { return { thread, environment: { hostId: 'agent-host' } }; },
+        events: {
+          async list() {
+            identityReads += 1;
+            return [{ data: { providerThreadId } }];
+          },
+        },
+      },
+    },
+  });
+  const context = { experimental_signal: new AbortController().signal };
+  await handlers.getSwarmBoard({ threadId: thread.id }, context);
+  await handlers.getSwarmBoard({ threadId: thread.id }, context);
+  assert.equal(identityReads, 1);
+  providerThreadId = 'replacement-session';
+  events.get('experimental_thread.events')({ thread, sequence: 2 });
+  assert.deepEqual(invalidations, [['swarm:t']]);
+  await handlers.getSwarmBoard({ threadId: thread.id }, context);
+  assert.equal(identityReads, 2);
+  assert.deepEqual(called.at(-1), { providerThreadId: 'replacement-session', hostId: 'agent-host' });
 });

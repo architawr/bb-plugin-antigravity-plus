@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rememberApprovalSetting, interceptApproval, recordSandboxEscapeToolCall } from '../host.ts';
+import { closeAssistantBeforeReasoning, rememberApprovalSetting, interceptApproval, recordSandboxEscapeToolCall } from '../host.ts';
 import { rememberSubagentSetting } from '../subagents.ts';
 
 const options = (autoApprove, permissionEscalation = 'ask', extraProviderOptions = {}) => ({
@@ -85,6 +85,14 @@ test('promptOnSandboxEscape surfaces sandbox escape prompts even when autoApprov
   };
   assert.equal(interceptApproval(request('guarded', outsideFile)), false);
   assert.equal(interceptApproval(request('unguarded', outsideFile)), true);
+  for (const [writeScope, expected] of [
+    ['../../.bashrc', false],
+    ['../outside.txt', false],
+    ['src/inside.txt', true],
+  ]) {
+    const relativeFile = { ...outsideFile, subject: { ...outsideFile.subject, writeScope } };
+    assert.equal(interceptApproval(request('guarded', relativeFile)), expected, writeScope);
+  }
 
   // turn/steer updates approval policy mid-thread
   rememberApprovalSetting({
@@ -94,3 +102,38 @@ test('promptOnSandboxEscape surfaces sandbox escape prompts even when autoApprov
   assert.equal(interceptApproval(request('guarded', ordinary)), false);
 });
 
+
+test('honors approval options when bridge request validation fails', () => {
+  const methods = ['thread/start', 'thread/resume', 'turn/start'];
+  for (const method of methods) {
+    // These partial requests omit required fields but still carry an explicit setting.
+    rememberApprovalSetting({ method, params: { threadId: method, options: options(true) } });
+    assert.equal(interceptApproval(request(method, approval('command'))), true, method);
+    rememberApprovalSetting({ method, params: { threadId: method, options: options(false) } });
+    assert.equal(interceptApproval(request(method, approval('command'))), false, method);
+  }
+});
+
+const assistant = { kind: 'item.textDelta', channel: 'agentMessage', text: 'first message' };
+const thought = { kind: 'item.textDelta', channel: 'reasoningText', text: 'thinking' };
+const summary = { ...thought, channel: 'reasoningSummary' };
+const assistantClose = { kind: 'item.textClose', key: { channel: 'assistant' }, channel: 'agentMessage' };
+
+test('closes the assistant stream once before reasoning across stdout batches', () => {
+  const open = new Set();
+  closeAssistantBeforeReasoning('a', [assistant], open);
+  assert.deepEqual(closeAssistantBeforeReasoning('b', [thought], open), [thought]);
+  assert.deepEqual(
+    closeAssistantBeforeReasoning('a', [thought, thought, assistant, summary], open),
+    [assistantClose, thought, thought, assistant, assistantClose, summary],
+  );
+});
+
+test('keeps SDK-emitted closes and stream boundaries without duplicates', () => {
+  const open = new Set();
+  for (const close of [assistantClose, { kind: 'turn.boundary' }, { kind: 'session.reset' }]) {
+    closeAssistantBeforeReasoning('a', [assistant], open);
+    const batch = [close, thought, summary];
+    assert.equal(closeAssistantBeforeReasoning('a', batch, open), batch);
+  }
+});

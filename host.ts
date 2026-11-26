@@ -3,10 +3,10 @@ import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { threadStartParamsSchema, threadResumeParamsSchema, turnStartParamsSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { createAutoCompactionTracker } from "./auto-compaction.ts";
 import { createBackgroundTaskTracker, defaultBackgroundTaskStatePath } from "./background-tasks.ts";
-import { ANTIGRAVITY_ACP_DIALECT_ID, applyThreadCommandDescriptions, onToolUpdate, registerAntigravityAcpDialect } from "./dialect.ts";
-import { modeControlOutput } from "./mode-controls.ts";
+import { ANTIGRAVITY_ACP_DIALECT_ID, applyThreadCommandDescriptionMessage, onToolUpdate, registerAntigravityAcpDialect } from "./dialect.ts";
+import { jsonlOutput, presentModeControlMessage } from "./mode-controls.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
-import { interceptSubagentApproval, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
+import { interceptSubagentApprovalMessage, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
 import { readSwarmBoard } from "./swarm-board.ts";
 import { swarmHostContract } from "./swarm-contract.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
@@ -44,12 +44,10 @@ function getBackgroundTaskTracker() {
   return trackerInstance;
 }
 
-// Keep exported symbol available for existing callers/tests, avoiding sync disk I/O in ACP proxy child processes.
-export const backgroundTaskTracker = isAcpProxyProcess ? null : getBackgroundTaskTracker();
-
 const unscopedSandboxEscapeIds = new Set<string>();
 const sandboxEscapeByThread = new Map<string, Set<string>>();
 const threadCwds = new Map<string, string>();
+const openAssistantStreams = new Set<string>();
 
 function rememberUnscopedSandboxEscape(toolCallId: string): void {
   if (unscopedSandboxEscapeIds.size >= MAX_TRACKED_SANDBOX_ESCAPES) {
@@ -78,13 +76,10 @@ export function recordSandboxEscapeToolCall(toolCallId: string, threadId?: strin
   else rememberUnscopedSandboxEscape(toolCallId);
 }
 
-function recordSandboxEscapeDeltas(line: string): string {
-  if (!line.includes("Outside of sandbox") && !line.includes("outside of sandbox")) return line;
-  let message: any;
-  try { message = JSON.parse(line); } catch { return line; }
+function recordSandboxEscapeDeltas(message: any): void {
   const params = message?.params;
   if (message?.method !== "thread/delta" || typeof params?.threadId !== "string" || !Array.isArray(params.deltas)) {
-    return line;
+    return;
   }
   for (const delta of params.deltas) {
     const presentation = delta?.presentation;
@@ -102,7 +97,6 @@ function recordSandboxEscapeDeltas(line: string): string {
           : null;
     if (itemId) rememberThreadSandboxEscape(params.threadId, itemId);
   }
-  return line;
 }
 
 if (!isAcpProxyProcess) {
@@ -112,7 +106,7 @@ if (!isAcpProxyProcess) {
     if (rawInput?.BypassSandbox === true && typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
       rememberUnscopedSandboxEscape(event.toolCallId);
     }
-    getBackgroundTaskTracker().recordToolEvent(event as any);
+    getBackgroundTaskTracker().recordToolEvent({ ...event, rawInput: rawInput ?? undefined });
   });
 }
 
@@ -186,6 +180,7 @@ export function rememberApprovalSetting(request: any) {
       commandDescriptionsThreads.delete(threadId);
       sandboxEscapeByThread.delete(threadId);
       threadCwds.delete(threadId);
+      openAssistantStreams.delete(threadId);
     }
     return;
   }
@@ -203,7 +198,8 @@ export function rememberApprovalSetting(request: any) {
   const parsed = schema?.safeParse(params);
   const options = parsed?.success
     ? parsed.data.options
-    : (method === "turn/steer" || method === "thread/fork") && params.options && typeof params.options === "object"
+    : (schema || method === "turn/steer" || method === "thread/fork") &&
+      params.options && typeof params.options === "object" && !Array.isArray(params.options)
       ? params.options
       : null;
 
@@ -262,8 +258,7 @@ function applyAntigravityDefaults(line: string, parsed: unknown): { line: string
 }
 
 function isPathOutsideWorkspace(writeScope: string, workspaceCwd: string): boolean {
-  if (!isAbsolute(writeScope)) return false;
-  const rel = relative(resolve(workspaceCwd), resolve(writeScope));
+  const rel = relative(resolve(workspaceCwd), resolve(workspaceCwd, writeScope));
   return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel);
 }
 
@@ -291,9 +286,14 @@ function isSandboxEscapeApproval(payload: any, threadId?: string): boolean {
 }
 
 export function interceptApproval(line: string): boolean {
-  if (interceptSubagentApproval(line)) return true;
   let message: any;
   try { message = JSON.parse(line); } catch { return false; }
+  return interceptApprovalMessage(message);
+}
+
+function interceptApprovalMessage(message: any): boolean {
+  if (message?.method !== "interaction/request") return false;
+  if (interceptSubagentApprovalMessage(message)) return true;
   if (isSubagentApprovalForDisabledThread(message)) return false;
   const threadId = message?.params?.threadId;
   if (message?.jsonrpc !== "2.0" || message.method !== "interaction/request" ||
@@ -319,20 +319,68 @@ export function interceptApproval(line: string): boolean {
   return true;
 }
 
+const assistantTextClose = {
+  kind: "item.textClose",
+  key: { channel: "assistant" },
+  channel: "agentMessage",
+} as const;
+
+// SDK 0.6.157 does not close the assistant stream when thought starts.
+export function closeAssistantBeforeReasoning<Delta extends { kind?: string; channel?: string }>(
+  threadId: string,
+  deltas: readonly Delta[],
+  openStreams: Set<string>,
+): readonly (Delta | typeof assistantTextClose)[] {
+  let ordered: (Delta | typeof assistantTextClose)[] | undefined;
+  for (const [index, delta] of deltas.entries()) {
+    if (delta?.kind === "turn.boundary" || delta?.kind === "session.reset") {
+      openStreams.delete(threadId);
+    } else if (delta?.channel === "agentMessage") {
+      if (delta.kind === "item.textDelta") openStreams.add(threadId);
+      if (delta.kind === "item.textClose") openStreams.delete(threadId);
+    } else if (
+      delta?.kind === "item.textDelta" &&
+      (delta.channel === "reasoningText" || delta.channel === "reasoningSummary") &&
+      openStreams.delete(threadId)
+    ) {
+      ordered ??= deltas.slice(0, index);
+      ordered.push(assistantTextClose);
+    }
+    ordered?.push(delta);
+  }
+  return ordered ?? deltas;
+}
+
+function processBridgeOutputLine(line: string): string[] {
+  let message;
+  try { message = JSON.parse(line); } catch { return [line]; }
+
+  if (interceptApprovalMessage(message)) return [];
+  const modesChanged = presentModeControlMessage(message);
+  const descriptionsChanged = applyThreadCommandDescriptionMessage(message, commandDescriptionsThreads);
+  recordSandboxEscapeDeltas(message);
+  const compactionChanged = getAutoCompactionTracker().processStdoutMessage(message);
+  let tasksChanged = false;
+  let streamChanged = false;
+  const params = message?.params;
+  if (message?.method === "thread/delta" && typeof params?.threadId === "string" && Array.isArray(params.deltas)) {
+    tasksChanged = getBackgroundTaskTracker().processStdoutMessage(message);
+    const ordered = closeAssistantBeforeReasoning(params.threadId, params.deltas, openAssistantStreams);
+    streamChanged = ordered !== params.deltas;
+    if (streamChanged) params.deltas = ordered;
+  }
+  return [modesChanged || descriptionsChanged || compactionChanged || tasksChanged || streamChanged
+    ? JSON.stringify(message)
+    : line];
+}
+
 function ensureStdoutFilter() {
   if (stdoutFilterInstalled) return;
   stdoutFilterInstalled = true;
   registerAntigravityAcpDialect();
   const write = process.stdout.write.bind(process.stdout);
   rawStdoutWrite = write;
-  const output = modeControlOutput(
-    interceptApproval,
-    line => getBackgroundTaskTracker().processStdoutLine(
-      getAutoCompactionTracker().processStdoutLine(
-        recordSandboxEscapeDeltas(applyThreadCommandDescriptions(line, commandDescriptionsThreads)),
-      ),
-    ),
-  );
+  const output = jsonlOutput(processBridgeOutputLine);
   output.on("data", chunk => write(chunk));
   process.stdout.write = ((chunk: any, encodingOrCallback?: any, callback?: any) =>
     output.write(chunk, encodingOrCallback, callback)) as typeof process.stdout.write;
@@ -341,6 +389,7 @@ function ensureStdoutFilter() {
 function disposeTracker() {
   trackerInstance?.dispose();
   autoCompactionInstance?.dispose();
+  openAssistantStreams.clear();
 }
 
 export const experimental_providerBridge = {
@@ -370,17 +419,9 @@ export const experimental_providerBridge = {
     const withDefaults = applyAntigravityDefaults(line, parsed);
     const subagentTransformed = transformSubagentRequest(withDefaults.line, withDefaults.parsed);
     rememberApprovalSetting(subagentTransformed.parsed);
-    getAutoCompactionTracker().handleInboundRequest(subagentTransformed.parsed);
-    const closeDeltas = getBackgroundTaskTracker().handleInboundRequest(subagentTransformed.parsed);
-    if (closeDeltas.length > 0) {
-      const stopThreadId = (subagentTransformed.parsed as Record<string, any> | null)?.params?.threadId;
-      if (typeof stopThreadId === "string") {
-        const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
-        write(`${JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId: stopThreadId, deltas: closeDeltas } })}\n`);
-      }
-    }
     const maintenanceRequest = parseMaintenanceRequest(subagentTransformed.parsed);
     if (maintenanceRequest !== null) {
+      const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
       const probeOptions = {
         command: maintenanceRequest.command,
         cwd: maintenanceRequest.cwd,
@@ -388,7 +429,7 @@ export const experimental_providerBridge = {
       };
       if (maintenanceRequest.method === "provider/usage") {
         void readAntigravityProviderUsage(probeOptions).then(result => {
-          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+          write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         }).catch(error => {
           const result = {
             supported: true,
@@ -399,15 +440,15 @@ export const experimental_providerBridge = {
               accountEmail: null,
             },
           };
-          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+          write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         });
         return;
       }
       if (maintenanceRequest.method === "provider/health") {
         void readAntigravityHealth(probeOptions).then(result => {
-          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+          write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         }).catch(error => {
-          process.stdout.write(`${JSON.stringify({
+          write(`${JSON.stringify({
             jsonrpc: "2.0",
             id: maintenanceRequest.id,
             result: {
@@ -433,9 +474,9 @@ export const experimental_providerBridge = {
           ...probeOptions,
           checkUpdates: maintenanceRequest.checkUpdates ?? true,
         }).then(result => {
-          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+          write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         }).catch(error => {
-          process.stdout.write(`${JSON.stringify({
+          write(`${JSON.stringify({
             jsonrpc: "2.0",
             id: maintenanceRequest.id,
             error: { code: -32000, message: error instanceof Error ? error.message : "Failed to inspect Antigravity CLI installation." },
@@ -446,15 +487,24 @@ export const experimental_providerBridge = {
       if (maintenanceRequest.method === "provider/installation/run") {
         const action = maintenanceRequest.action ?? "update";
         void planAntigravityInstallationRun(action, probeOptions).then(result => {
-          process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
+          write(`${JSON.stringify({ jsonrpc: "2.0", id: maintenanceRequest.id, result })}\n`);
         }).catch(error => {
-          process.stdout.write(`${JSON.stringify({
+          write(`${JSON.stringify({
             jsonrpc: "2.0",
             id: maintenanceRequest.id,
             result: { available: false, message: error instanceof Error ? error.message : "Failed to plan Antigravity CLI maintenance." },
           })}\n`);
         });
         return;
+      }
+    }
+    getAutoCompactionTracker().handleInboundRequest(subagentTransformed.parsed);
+    const closeDeltas = getBackgroundTaskTracker().handleInboundRequest(subagentTransformed.parsed);
+    if (closeDeltas.length > 0) {
+      const stopThreadId = (subagentTransformed.parsed as Record<string, any> | null)?.params?.threadId;
+      if (typeof stopThreadId === "string") {
+        const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
+        write(`${JSON.stringify({ jsonrpc: "2.0", method: "thread/delta", params: { threadId: stopThreadId, deltas: closeDeltas } })}\n`);
       }
     }
     experimental_acpProviderBridge.handleLine(mapPromptMode(subagentTransformed.line, subagentTransformed.parsed));

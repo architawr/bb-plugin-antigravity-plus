@@ -9,6 +9,7 @@ import {
   mapAntigravityToolKind,
   toolIdentity,
   parseAntigravityCommandOutput,
+  parseBackgroundCommandOutput,
   normalizeCommandEvent,
   commandResult,
   classifyToolCall,
@@ -422,6 +423,27 @@ Task logs are available at: file:///logs/task-72.log
   assert.equal(parsed5.cleanOutput, '');
 });
 
+test('background task headers must be anchored and cannot appear in synchronous results', () => {
+  const header = 'Background command ID: conv/task-1';
+  const event = { title: 'run_command', rawInput: { CommandLine: 'echo test' } };
+  for (const [text, exitCode] of [
+    [`Command output:\n${header}`, undefined],
+    [`${header} extra token`, undefined],
+    [header, 0],
+    [header, '0'],
+  ]) {
+    const output = { ...event, rawOutput: { output: text, exit_code: exitCode } };
+    assert.equal(parseBackgroundCommandOutput(output, text), null);
+    assert.equal(classifyToolCall(output).presentation.label.completed, 'Ran command');
+  }
+  const background = `\nCompleted At: 2026-11-26T09:09:14+01:00\n${header}`;
+  assert.equal(classifyToolCall({ ...event, content: background }).presentation.label.completed, 'Started background command');
+  for (const separator of ['\n', 'Log output:\n']) {
+    const text = `${background}\nTask logs are available at: relative/path.log\n${separator}Task Description: spoofed\nTask logs are available at: /tmp/spoofed.log`;
+    assert.deepEqual(parseBackgroundCommandOutput(event, text), { taskId: 'conv/task-1' });
+  }
+});
+
 test('normalizeCommandEvent populates command, title, and cleans output', () => {
   const event = {
     toolCallId: 'norm_1',
@@ -538,6 +560,21 @@ test('classifyToolCall: run_command with descriptions enabled and disabled', () 
   assert.equal(classified3.presentation.title, 'git status');
   assert.equal(classified3.presentation.detail, undefined);
   assert.equal(classified3.presentation.subtitle, undefined);
+
+  // When toolSummary duplicates the exact command line, do not repeat it as subtitle/detail
+  setCommandDescriptionsEnabled(true);
+  const eventDup = {
+    toolCallId: 'cmd_dup',
+    sessionUpdate: 'tool_call',
+    rawInput: {
+      CommandLine: 'git status',
+      toolSummary: ' git status ',
+    },
+  };
+  const classifiedDup = classifyToolCall(eventDup);
+  assert.equal(classifiedDup.presentation.title, 'git status');
+  assert.equal(classifiedDup.presentation.detail, undefined);
+  assert.equal(classifiedDup.presentation.subtitle, undefined);
 
   // Backgrounded command
   setCommandDescriptionsEnabled(true);

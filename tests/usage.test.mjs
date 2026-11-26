@@ -211,7 +211,6 @@ test('returns error when command resolution throws', async () => {
 test('responds to provider/usage JSON-RPC requests', async () => {
   const originalWrite = process.stdout.write;
   try {
-    experimental_providerBridge.start();
     const response = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('No usage response')), 5000);
       process.stdout.write = chunk => {
@@ -219,10 +218,11 @@ test('responds to provider/usage JSON-RPC requests', async () => {
         resolve(String(chunk));
         return true;
       };
+        experimental_providerBridge.start();
       experimental_providerBridge.handleLine(JSON.stringify({
-        jsonrpc: '2.0', id: 42, method: 'provider/usage',
-        params: { providerOptions: { acpLaunchSpec: { displayName: 'Missing', command: 'missing-antigravity-test-command', args: [], env: {} } } },
-      }));
+          jsonrpc: '2.0', id: 42, method: 'provider/usage',
+          params: { providerOptions: { acpLaunchSpec: { displayName: 'Missing', command: 'missing-antigravity-test-command', args: [], env: {} } } },
+        }));
     });
     const parsed = JSON.parse(await response);
     assert.equal(parsed.jsonrpc, '2.0');
@@ -312,4 +312,54 @@ test('evicts cached usage when the provider is removed', async () => {
   enabled = true;
   await getResource({ resourceId, refresh: false });
   assert.equal(collections, 2);
+});
+
+test('keeps healthy hosts visible and preserves cache when one host lookup fails', async () => {
+  let handlers;
+  let failHost2 = false;
+  let host2Collections = 0;
+  const bb = {
+    pluginId: 'antigravity-plus',
+    rpc: { register(_contract, registered) { handlers = registered; } },
+    sdk: {
+      hosts: {
+        list: async () => [
+          { id: 'host_1', name: 'Healthy Mac', status: 'connected' },
+          { id: 'host_2', name: 'Flaky Box', status: 'connected' },
+        ],
+        get: async ({ hostId }) => ({ id: hostId, name: hostId, status: 'connected' }),
+      },
+      providers: {
+        list: async ({ hostId }) => {
+          if (hostId === 'host_2' && failHost2) throw new Error('host unreachable');
+          return [{ id: 'antigravity-plus', pluginId: 'antigravity-plus', displayName: 'Antigravity Provider +' }];
+        },
+      },
+      system: {
+        usageLimits: async ({ hostId }) => {
+          if (hostId === 'host_2') host2Collections += 1;
+          return { 'antigravity-plus': normalizeAntigravityUsageOutput(SAMPLE_USAGE_JSON).usage };
+        },
+      },
+    },
+  };
+  registerAntigravityUsageSource(bb);
+  const listResources = handlers['provider-usage.v1.listResources'];
+  const getResource = handlers['provider-usage.v1.getResource'];
+
+  // Warm cache on host_2 while both hosts are healthy.
+  const host2Id = JSON.stringify(['host_2', 'antigravity-plus']);
+  assert.equal((await getResource({ resourceId: host2Id, refresh: true })).usage.status, 'ok');
+  assert.equal(host2Collections, 1);
+
+  // When host_2 fails provider inventory, host_1 remains visible and host_2 cache is not evicted.
+  failHost2 = true;
+  const degraded = await listResources({});
+  assert.equal(degraded.resources.length, 1);
+  assert.equal(degraded.resources[0].scope.hostId, 'host_1');
+
+  // Once host_2 recovers, cached observation is still served without an extra collection.
+  failHost2 = false;
+  assert.equal((await getResource({ resourceId: host2Id, refresh: false })).usage.status, 'ok');
+  assert.equal(host2Collections, 1);
 });

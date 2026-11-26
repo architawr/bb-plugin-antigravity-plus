@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readSwarmBoard } from "../swarm-board.ts";
+import { swarmMentionPattern } from "../swarm-contract.ts";
 
 const VALID_ID = "1665e07b-1a7f-4ab3-a2df-52beefe0097f";
 
@@ -158,4 +159,14 @@ test("readSwarmBoard tail-reads oversized board.jsonl without losing trailing po
     assert.equal(snapshot.messages[0].seq, 3);
     assert.match(snapshot.messages[0].text, /latest line/);
   });
+});
+
+test("Swarm mentions match complete agent names", () => {
+  const mention = swarmMentionPattern("worker-1");
+  assert.equal(mention.test("Thanks, @worker-1!"), true);
+  assert.equal(mention.test("@worker-10 @worker-1-backup"), false);
+  assert.equal(mention.test("mail@worker-1"), false);
+  assert.equal(mention.test("@worker-1é"), false);
+  assert.equal(swarmMentionPattern("worker.1").test("(@worker.1)"), true);
+  assert.equal(swarmMentionPattern("worker.1").test("@workerX1"), false);
 });

@@ -8,6 +8,7 @@ bb-plugin-template/
 
 # Private runtime state and local credentials
 background-tasks.json
+background-tasks.json.lock
 background-tasks.json.*.tmp
 *.pem
 *.key

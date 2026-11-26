@@ -26,6 +26,12 @@ export default async function antigravity(bb: BbPluginApi) {
   if (bb.hosts?.experimental_client && bb.rpc?.register) {
     const hostClient = bb.hosts.experimental_client({ contract: swarmHostContract });
     const threadIdentityCache = new Map<string, CachedThreadTarget>();
+    let threadEventsRevision = 0;
+
+    function invalidateThreadTarget(threadId: string): void {
+      threadEventsRevision += 1;
+      threadIdentityCache.delete(threadId);
+    }
 
     function rememberThreadTarget(threadId: string, target: CachedThreadTarget): void {
       if (threadIdentityCache.size >= MAX_THREAD_IDENTITY_CACHE) {
@@ -42,6 +48,7 @@ export default async function antigravity(bb: BbPluginApi) {
       const cached = threadIdentityCache.get(threadId);
       if (cached) return cached;
 
+      const revision = threadEventsRevision;
       let detail: any;
       try {
         detail = await bb.sdk.threads.get({ threadId, include: "environment", signal });
@@ -95,7 +102,7 @@ export default async function antigravity(bb: BbPluginApi) {
 
       if (!providerThreadId) return null;
       const target = { providerThreadId, hostId };
-      rememberThreadTarget(threadId, target);
+      if (revision === threadEventsRevision) rememberThreadTarget(threadId, target);
       return target;
     }
 
@@ -120,13 +127,16 @@ export default async function antigravity(bb: BbPluginApi) {
 
     bb.events?.on?.("experimental_thread.events", ({ thread }) => {
       if (thread.providerId === PROVIDER_ID) {
+        // The SDK event carries a sequence counter, not the individual event types.
+        invalidateThreadTarget(thread.id);
         bb.rpc.experimental_invalidate([`swarm:${thread.id}`]);
       }
     });
     bb.events?.on?.("thread.deleted", ({ thread }) => {
-      threadIdentityCache.delete(thread.id);
+      invalidateThreadTarget(thread.id);
     });
     bb.onDispose?.(() => {
+      threadEventsRevision += 1;
       threadIdentityCache.clear();
     });
   }
@@ -207,7 +217,6 @@ export default async function antigravity(bb: BbPluginApi) {
     experimental_nativeSkillRoots: {
       user: [
         ".gemini/antigravity-cli/skills",
-        { path: ".gemini/antigravity-cli/builtin/skills", namePrefix: "antigravity:" },
         ".gemini/skills",
         ".gemini/config/skills",
         ".agents/skills",

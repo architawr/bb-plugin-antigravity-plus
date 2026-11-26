@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,6 +130,12 @@ test('persists instructions per session and refuses unsafe session ids as file n
     assert.equal(createInstructionStore(dir).get('abc-123'), 'rules');
     assert.equal(createInstructionStore(dir).get('../escape'), undefined);
     assert.deepEqual(readdirSync(dir), ['abc-123.json']);
+
+    mkdirSync(join(dir, 'failed-rename.json'));
+    const store = createInstructionStore(dir);
+    store.set('failed-rename', 'in memory');
+    assert.equal(store.get('failed-rename'), 'in memory');
+    assert.deepEqual(readdirSync(dir).sort(), ['abc-123.json', 'failed-rename.json']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -206,7 +212,9 @@ test('the proxy explains an outdated agy before its own error', { skip: process.
   const agent = fileURLToPath(new URL('./fake-old-agy.mjs', import.meta.url));
   chmodSync(agent, 0o755);
   const host = fileURLToPath(new URL('../host.ts', import.meta.url));
-  const child = spawn(process.execPath, [host, AGY_ACP_PROXY_FLAG, agent, 'acp'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [
+    '--disable-warning=ExperimentalWarning', host, AGY_ACP_PROXY_FLAG, agent, 'acp',
+  ], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   const code = await new Promise(resolve => child.on('close', resolve));

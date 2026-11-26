@@ -71,17 +71,22 @@ function hasFlag(args: readonly unknown[], names: readonly string[]): boolean {
   });
 }
 
-function applyProfileFlags(spec: Record<string, any>, env: Record<string, unknown>): void {
-  if (!Array.isArray(spec.args) || spec.args[0] !== "acp") return;
+export function resolveAntigravityProfileArgs(env: Record<string, unknown>, args: readonly unknown[] = []): string[] {
   const extraArgs: string[] = [];
   const geminiDir = nonEmptyEnvValue(env[BB_ANTIGRAVITY_GEMINI_DIR_ENV]);
-  if (geminiDir !== null && !hasFlag(spec.args, ["--gemini-dir", "--gemini_dir"])) {
+  if (geminiDir !== null && !hasFlag(args, ["--gemini-dir", "--gemini_dir"])) {
     extraArgs.push("--gemini-dir", geminiDir);
   }
   const appDataDir = nonEmptyEnvValue(env[BB_ANTIGRAVITY_APP_DATA_DIR_ENV]);
-  if (appDataDir !== null && !hasFlag(spec.args, ["--app-data-dir", "--app_data_dir"])) {
+  if (appDataDir !== null && !hasFlag(args, ["--app-data-dir", "--app_data_dir"])) {
     extraArgs.push("--app-data-dir", appDataDir);
   }
+  return extraArgs;
+}
+
+function applyProfileFlags(spec: Record<string, any>, env: Record<string, unknown>): void {
+  if (!Array.isArray(spec.args) || spec.args[0] !== "acp") return;
+  const extraArgs = resolveAntigravityProfileArgs(env, spec.args);
   if (extraArgs.length > 0) {
     spec.args = [...spec.args, ...extraArgs];
   }

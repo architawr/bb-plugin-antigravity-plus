@@ -135,13 +135,20 @@ export function applyThreadCommandDescriptions(
     return line;
   }
 
+  return applyThreadCommandDescriptionMessage(message, enabledByThread) ? JSON.stringify(message) : line;
+}
+
+export function applyThreadCommandDescriptionMessage(
+  message: any,
+  enabledByThread: ReadonlyMap<string, boolean>,
+): boolean {
   const params = message?.params;
   if (
     message?.method !== "thread/delta" ||
     typeof params?.threadId !== "string" ||
     !Array.isArray(params.deltas)
   ) {
-    return line;
+    return false;
   }
 
   const enabled = enabledByThread.get(params.threadId) ?? getCommandDescriptionsEnabled();
@@ -164,10 +171,10 @@ export function applyThreadCommandDescriptions(
     }
   }
 
-  return modified ? JSON.stringify(message) : line;
+  return modified;
 }
 
-function extractEventOutputText(event: AcpToolUpdateEvent): string {
+export function extractEventOutputText(event: { content?: unknown; rawOutput?: unknown }): string {
   const parts: string[] = [];
   function collect(val: unknown) {
     if (typeof val === "string") {
@@ -442,6 +449,69 @@ export function toolIdentity(event: AcpToolUpdateEvent): AcpDialectToolIdentity 
 }
 
 // Output and exit code parsing
+const BACKGROUND_TASK_ID_LINE = /^(?:Tool is running as a background task with task id|Background command ID):[ \t]*([A-Za-z0-9][A-Za-z0-9._:/-]{0,199})[ \t]*$/;
+const WRAPPER_TIMESTAMP_LINE = /^(?:Created|Completed) At:[ \t]*\d{4}-\d{2}-\d{2}T\S+[ \t]*$/;
+export function normalizeFileUri(value: string): string {
+  return value.trim().replace(/^file:\/\/\/([A-Za-z]:\/)/i, '$1').replace(/^file:\/\/\//i, '/');
+}
+export function structuredCommandExitCode(rawOutput: unknown): number | null {
+  if (!rawOutput || typeof rawOutput !== "object") return null;
+  for (const key of ["exit_code", "exitCode"]) {
+    const value: unknown = Reflect.get(rawOutput, key);
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+const SAFE_OUTPUT_FILE_PATH = /^(?:file:\/\/\/|\/|[A-Za-z]:[\\/])[^\r\n"'`<>|?*]+$/;
+
+export function parseBackgroundCommandOutput(
+  event: { rawOutput?: unknown },
+  text: string,
+): { taskId: string; description?: string; outputFile?: string } | null {
+  if (structuredCommandExitCode(event.rawOutput) !== null) return null;
+  const lines = text.split(/\r?\n/);
+  let index = 0;
+  while (index < lines.length) {
+    const trimmed = lines[index].trim();
+    if (!trimmed || WRAPPER_TIMESTAMP_LINE.test(trimmed)) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  if (index >= lines.length) return null;
+  const idMatch = BACKGROUND_TASK_ID_LINE.exec(lines[index].trim());
+  if (!idMatch) return null;
+  const taskId = idMatch[1];
+  let description: string | undefined;
+  let outputFile: string | undefined;
+  for (let i = index + 1; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || /^Log output:/i.test(trimmed)) break;
+    if (!description) {
+      const descMatch = /^Task Description:[ \t]*([^\r\n]+)$/.exec(trimmed);
+      if (descMatch) {
+        description = descMatch[1].trim();
+        continue;
+      }
+    }
+    if (!outputFile) {
+      const fileMatch = /^Task logs are available at:[ \t]*([^\r\n]+)$/.exec(trimmed);
+      if (fileMatch) {
+        const candidate = fileMatch[1].trim();
+        if (SAFE_OUTPUT_FILE_PATH.test(candidate)) outputFile = normalizeFileUri(candidate);
+      }
+    }
+  }
+  return {
+    taskId,
+    ...(description ? { description } : {}),
+    ...(outputFile ? { outputFile } : {}),
+  };
+}
+
 export function parseAntigravityCommandOutput(rawText: string): {
   cleanOutput: string;
   exitCode: number | null;
@@ -452,12 +522,7 @@ export function parseAntigravityCommandOutput(rawText: string): {
     return { cleanOutput: "", exitCode: null, isBackgrounded: false, backgroundTaskId: null };
   }
 
-  const exitCodeMatch = rawText.match(/^(?:The c|C)ommand exited with code (-?\d+)\b\.?/m);
-  const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1], 10) : null;
-
-  const bgMatch = rawText.match(/Tool is running as a background task with task id:[ \t]*([^\s\r\n][^\r\n]*)/i);
-  const isBackgrounded = Boolean(bgMatch);
-  const backgroundTaskId = bgMatch ? bgMatch[1].trim() : null;
+  const backgroundTaskId = parseBackgroundCommandOutput({}, rawText)?.taskId ?? null;
 
   // Diagnostic headers (e.g. "There were sandbox errors...") carry the reason a
   // command failed, and are often the only information when the output section
@@ -472,6 +537,9 @@ export function parseAntigravityCommandOutput(rawText: string): {
   const headerSplitMatch = body.match(
     /^(?:(?:Created At:[^\r\n]*|Completed At:[^\r\n]*|(?:The c|C)ommand exited with code -?\d+\b[^\r\n]*|The user changed the command to be run to:[^\r\n]*|This command includes call\(s\) to[^\r\n]*|[ \t]*)\r?\n)*(?:Command output|Output):\r?\n/i
   );
+  const exitCodeMatch = (headerSplitMatch?.[0] ?? rawText).match(/^(?:The c|C)ommand exited with code (-?\d+)\b\.?/m);
+  const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1], 10) : null;
+
   let cleanOutput: string;
   if (headerSplitMatch) {
     cleanOutput = body.slice(headerSplitMatch[0].length);
@@ -498,7 +566,7 @@ export function parseAntigravityCommandOutput(rawText: string): {
   return {
     cleanOutput,
     exitCode,
-    isBackgrounded,
+    isBackgrounded: backgroundTaskId !== null,
     backgroundTaskId,
   };
 }
@@ -643,15 +711,13 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
       const bypassSandbox = rawInput.BypassSandbox === true;
 
       const outputText = extractEventOutputText(event);
-      const parsedOutput = parseAntigravityCommandOutput(outputText);
-      const isBackgrounded =
-        parsedOutput.isBackgrounded ||
-        /Tool is running as a background task with task id:/i.test(outputText);
+      const isBackgrounded = parseBackgroundCommandOutput(event, outputText) !== null;
 
       const useToolSummary =
         getCommandDescriptionsEnabled() &&
         typeof toolSummary === "string" &&
-        toolSummary.trim().length > 0;
+        toolSummary.trim().length > 0 &&
+        toolSummary.trim() !== commandLine?.trim();
 
       const presentation: DialectPresentation = {
         label: {

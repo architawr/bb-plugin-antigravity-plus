@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { experimental_providerBridge as bridge } from '../host.ts';
+if (!process.env.BB_ANTIGRAVITY_TASK_STATE_DIR?.trim()) {
+  throw new Error('bridge-fixture.mjs requires BB_ANTIGRAVITY_TASK_STATE_DIR to point to a temp directory');
+}
+// Keep persisted task state isolated from the real user profile in this fixture.
+const { experimental_providerBridge: bridge } = await import('../host.ts');
 
 const enabled = process.argv[2] === 'true';
 const originalWrite = process.stdout.write.bind(process.stdout);
@@ -73,12 +77,55 @@ try {
     const escapeInteraction = await wait(
       m => m.method === 'interaction/request' && m.params?.payload?.subject?.itemId === 'escape-tool',
     );
+    const beforeEscapeBoundaryCount = messages.length;
     bridge.handleLine(JSON.stringify({
       jsonrpc: '2.0',
       id: escapeInteraction.id,
       result: { decision: 'deny', grantedPermissions: null },
     }));
-    await wait(m => m.method === 'thread/delta' && JSON.stringify(m).includes('escape-tool'));
+    await wait(m => messages.indexOf(m) >= beforeEscapeBoundaryCount && m.method === 'thread/delta' && m.params?.deltas?.some(d => d.kind === 'turn.boundary'));
+
+    // Real end-to-end negative control: synchronous command stdout mentioning background task headers must NOT open a backgroundTask.
+    const beforePhantomBoundaryCount = messages.length;
+    send(6, 'turn/start', {
+      threadId: 'thread',
+      providerThreadId: started.result.providerThreadId,
+      clientRequestId: 'creq_56789abcde',
+      input: [{ type: 'text', text: 'phantom-stdout-test' }],
+      options,
+    });
+    await wait(m => m.method === 'thread/delta' && JSON.stringify(m).includes('phantom-checked'));
+    await wait(m => messages.indexOf(m) >= beforePhantomBoundaryCount && m.method === 'thread/delta' && m.params?.deltas?.some(d => d.kind === 'turn.boundary'));
+    const phantomDeltas = messages.slice(beforePhantomBoundaryCount)
+      .flatMap(m => (m.method === 'thread/delta' && Array.isArray(m.params?.deltas) ? m.params.deltas : []));
+    const phantomBg = phantomDeltas.filter(d => d.item?.type === 'backgroundTask' && (d.item.familyId === 'fake/phantom-1' || d.key?.parentRef === 'phantom-call-1'));
+    assert.deepEqual(phantomBg, [], 'synchronous stdout must never register a phantom backgroundTask');
+
+    const phantomClose = phantomDeltas.find(d => d.kind === 'item.close' && d.key?.providerItemId === 'phantom-call-1');
+    assert.equal(phantomClose?.presentation?.label?.completed, 'Ran command');
+
+    const thoughtIndex = phantomDeltas.findIndex(d => d.kind === 'item.textDelta' && d.text === 'phantom-reasoning');
+    assert.ok(thoughtIndex > 0);
+    assert.deepEqual(phantomDeltas[thoughtIndex - 1], {
+      kind: 'item.textClose', key: { channel: 'assistant' }, channel: 'agentMessage',
+    });
+    assert.equal(phantomDeltas[thoughtIndex - 2]?.text, 'phantom-before-thought');
+
+    // Real end-to-end Case 2 replay: run_command left in_progress at prompt end_turn opens an orphan banner without holding the turn, then settles on late update.
+    const beforeOrphanCount = messages.length;
+    send(7, 'turn/start', {
+      threadId: 'thread',
+      providerThreadId: started.result.providerThreadId,
+      clientRequestId: 'creq_6789abcdef',
+      input: [{ type: 'text', text: 'orphan-command-test' }],
+      options,
+    });
+    await wait(m => m.method === 'thread/delta' && m.params?.deltas?.some(d => d.kind === 'item.open' && d.item?.type === 'backgroundTask' && d.item?.familyId === 'orphan-call-1'));
+    await wait(m => messages.indexOf(m) >= beforeOrphanCount && m.method === 'thread/delta' && m.params?.deltas?.some(d => d.kind === 'turn.boundary' && d.status === 'completed'));
+    const lateSettle = await wait(m => m.method === 'thread/delta' && m.params?.deltas?.some(d => d.kind === 'item.close' && d.item?.type === 'backgroundTask' && d.item?.familyId === 'orphan-call-1'));
+    const closedOrphan = lateSettle.params.deltas.find(d => d.kind === 'item.close' && d.item?.type === 'backgroundTask' && d.item?.familyId === 'orphan-call-1');
+    assert.equal(closedOrphan.status, 'completed');
+    assert.match(closedOrphan.item.summary, /42 passed/);
   }
 
   bridge.onClose?.();

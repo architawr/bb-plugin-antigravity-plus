@@ -2,11 +2,7 @@ import { experimental_execHostFile } from "@get-bb/plugin-sdk/process";
 import type { ProviderUsageResult } from "@get-bb/plugin-sdk/provider-bridge";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import {
-  BB_ANTIGRAVITY_APP_DATA_DIR_ENV,
-  BB_ANTIGRAVITY_GEMINI_DIR_ENV,
-  resolveAntigravityCommand,
-} from "./cli.ts";
+import { resolveAntigravityCommand, resolveAntigravityProfileArgs } from "./cli.ts";
 
 const USAGE_TIMEOUT_MS = 15_000;
 const USAGE_CACHE_TTL_MS = 60_000;
@@ -216,11 +212,7 @@ export async function readAntigravityProviderUsage(options?: {
     if (!resolvedCommand) {
       return { supported: true, usage: { status: "not_installed" } };
     }
-    const usageArgs = ["-p", "/usage", "--output-format", "json"];
-    const geminiDir = env[BB_ANTIGRAVITY_GEMINI_DIR_ENV]?.trim();
-    if (geminiDir) usageArgs.push("--gemini-dir", geminiDir);
-    const appDataDir = env[BB_ANTIGRAVITY_APP_DATA_DIR_ENV]?.trim();
-    if (appDataDir) usageArgs.push("--app-data-dir", appDataDir);
+    const usageArgs = ["-p", "/usage", "--output-format", "json", ...resolveAntigravityProfileArgs(env)];
     const { stdout, stderr } = await execFile(
       resolvedCommand,
       usageArgs,
@@ -441,33 +433,54 @@ export function registerAntigravityUsageSource(bb: BbPluginApi) {
     {
       async [LIST_RESOURCES_METHOD]() {
         const hosts = await bb.sdk.hosts.list();
-        const resources = (
-          await Promise.all(
-            hosts.map(async host => {
-              const providers = await bb.sdk.providers.list({ hostId: host.id, capability: "usage" });
-              return providers
-                .filter(p => p.pluginId === (bb.pluginId ?? PLUGIN_ID) && p.id === PROVIDER_ID)
-                .map(p => {
-                  const id = JSON.stringify([host.id, p.id]);
-                  return {
-                    id,
-                    accountKey: cache.get(id)?.accountKey ?? null,
-                    providerId: p.id,
-                    label: p.displayName,
-                    scope: {
-                      kind: "host" as const,
-                      hostId: host.id,
-                      hostName: host.name,
-                    },
-                  };
-                });
-            }),
-          )
-        ).flat();
+        const hostResults = await Promise.allSettled(
+          hosts.map(async host => {
+            const providers = await bb.sdk.providers.list({ hostId: host.id, capability: "usage" });
+            return providers
+              .filter(p => p.pluginId === (bb.pluginId ?? PLUGIN_ID) && p.id === PROVIDER_ID)
+              .map(p => {
+                const id = JSON.stringify([host.id, p.id]);
+                return {
+                  id,
+                  accountKey: cache.get(id)?.accountKey ?? null,
+                  providerId: p.id,
+                  label: p.displayName,
+                  scope: {
+                    kind: "host" as const,
+                    hostId: host.id,
+                    hostName: host.name,
+                  },
+                };
+              });
+          }),
+        );
+
+        const resources: Array<{
+          id: string;
+          accountKey: string | null;
+          providerId: string;
+          label: string;
+          scope: { kind: "host"; hostId: string; hostName: string };
+        }> = [];
+        const failedHostIds = new Set<string>();
+        hostResults.forEach((result, index) => {
+          if (result.status === "fulfilled") {
+            resources.push(...result.value);
+          } else {
+            failedHostIds.add(hosts[index].id);
+          }
+        });
 
         const validIds = new Set(resources.map(r => r.id));
         for (const cachedId of cache.keys()) {
-          if (!validIds.has(cachedId)) cache.delete(cachedId);
+          if (validIds.has(cachedId)) continue;
+          try {
+            const [cachedHostId] = resourceIdTupleSchema.parse(JSON.parse(cachedId));
+            if (failedHostIds.has(cachedHostId)) continue;
+          } catch {
+            // Fall through and evict malformed cache keys.
+          }
+          cache.delete(cachedId);
         }
         return { resources };
       },

@@ -25,12 +25,10 @@ updates:
           - "minor"
           - "patch"
     ignore:
-      # package.json engines pins bbPluginSdk to ">=0.6.104 <0.7".
-      # For 0.x packages a minor bump (0.6 -> 0.7) is breaking, so only allow patches.
+      # package.json engines pins bbPluginSdk to ">=0.6.150 <0.7".
+      # Because bb plugin build bundles @get-bb/plugin-sdk/provider-bridge from dependencies,
+      # sync this pin intentionally via `bb plugin types .` against the tested BB Desktop release.
       - dependency-name: "@get-bb/plugin-sdk"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
       # Keep Node typings aligned with the supported Node major (engines: node >=22).
       - dependency-name: "@types/node"
         update-types:
