@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolveAgyAppDataDir } from "./agy-fork.ts";
-import { resolveAntigravityProfileArgs } from "./cli.ts";
+import { resolveAntigravityLaunchProfile } from "./cli.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_MAX_READ_BYTES = 256 * 1024;
@@ -14,6 +14,8 @@ const COMPACTION_LABEL = {
 } as const;
 
 const COMPACTION_ICON = { glyph: "Archive" } as const;
+const AUTO_COMPACTION_PREFIX = "agy-auto-compact:";
+const MISSING_CHECKPOINT = "Antigravity did not write a new compaction checkpoint. Check the session transcript and retry after a conversation turn.";
 
 export interface AutoCompactionCheckpoint {
   stepIndex: number;
@@ -35,8 +37,23 @@ interface ThreadCompactionState {
   providerThreadId: string | null;
   transcriptPath: string | null;
   offset: number;
-  manualCompactionInFlight: boolean;
+  manual: ManualCompaction | null;
   seenSteps: Set<number>;
+}
+
+interface ManualCompaction {
+  open: Record<string, any> | null;
+  checkpoint: AutoCompactionCheckpoint | undefined;
+  postUsedTokens: number | null;
+}
+
+function compactionItemKey(delta: Record<string, any>): string | null {
+  if (delta.item?.type !== "compaction") return null;
+  const { providerItemId, channel } = delta.key ?? {};
+  if (typeof providerItemId === "string") {
+    return providerItemId.startsWith(AUTO_COMPACTION_PREFIX) ? null : `id:${providerItemId}`;
+  }
+  return typeof channel === "string" ? `channel:${channel}` : null;
 }
 
 function formatCompactTokens(tokens: number): string {
@@ -63,24 +80,6 @@ function formatCompactionDetail(
     return `from ${formatCompactTokens(before)} tokens`;
   }
   return undefined;
-}
-
-function extractLaunchAppDataDir(parsed: unknown, home: string): string {
-  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : null;
-  const params = record?.params && typeof record.params === "object" ? record.params : null;
-  const options = params?.options && typeof params.options === "object" ? params.options : null;
-  const spec = options?.providerOptions?.acpLaunchSpec;
-  const args: string[] = Array.isArray(spec?.args)
-    ? spec.args.filter((value: unknown): value is string => typeof value === "string")
-    : [];
-  const mergedEnv: Record<string, unknown> = {
-    ...process.env,
-    ...(spec?.env && typeof spec.env === "object" ? spec.env : undefined),
-    ...(params?.envVars && typeof params.envVars === "object" ? params.envVars : undefined),
-    ...(options?.envVars && typeof options.envVars === "object" ? options.envVars : undefined),
-  };
-
-  return resolveAgyAppDataDir([...args, ...resolveAntigravityProfileArgs(mergedEnv, args)], home);
 }
 
 function defaultTranscriptPath(providerThreadId: string, appDataDir: string): string {
@@ -141,7 +140,7 @@ function buildAutoCompactionDeltas(
   checkpoint: AutoCompactionCheckpoint,
   postUsedTokens: number | null,
 ): Record<string, unknown>[] {
-  const key = { providerItemId: `agy-auto-compact:${checkpoint.stepIndex}` };
+  const key = { providerItemId: `${AUTO_COMPACTION_PREFIX}${checkpoint.stepIndex}` };
   const detail = formatCompactionDetail(checkpoint, postUsedTokens);
   const presentation = {
     label: COMPACTION_LABEL,
@@ -191,7 +190,7 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
         providerThreadId: null,
         transcriptPath: null,
         offset: 0,
-        manualCompactionInFlight: false,
+        manual: null,
         seenSteps: new Set<number>(),
       };
       threads.set(threadId, state);
@@ -219,7 +218,12 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
     state.seenSteps.clear();
   }
 
-  function scanNewCheckpoints(state: ThreadCompactionState, suppressEmit: boolean): AutoCompactionCheckpoint[] {
+  function beginManualCompaction(state: ThreadCompactionState, open: Record<string, any> | null): void {
+    if (state.transcriptPath) state.offset = fileSizeOrZero(state.transcriptPath);
+    state.manual = { open, checkpoint: undefined, postUsedTokens: null };
+  }
+
+  function scanNewCheckpoints(state: ThreadCompactionState): AutoCompactionCheckpoint[] {
     const transcriptPath = state.transcriptPath;
     if (!transcriptPath || !existsSync(transcriptPath)) return [];
 
@@ -264,7 +268,7 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
         const checkpoint = parseCheckpointLine(lines[i] ?? "");
         if (!checkpoint || state.seenSteps.has(checkpoint.stepIndex)) continue;
         rememberSeenStep(state, checkpoint.stepIndex);
-        if (!suppressEmit) found.push(checkpoint);
+        found.push(checkpoint);
       }
       return found;
     } catch {
@@ -289,7 +293,7 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
     }
 
     if (method === "thread/start" || method === "thread/resume" || method === "thread/fork") {
-      const appDataDir = extractLaunchAppDataDir(parsed, home);
+      const { appDataDir } = resolveAntigravityLaunchProfile(parsed, home);
       const state = getOrCreateState(threadId, appDataDir);
       const providerThreadId = record.params?.providerThreadId;
       if (typeof providerThreadId === "string") {
@@ -300,7 +304,7 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
 
     if (method === "thread/compact") {
       const state = getOrCreateState(threadId);
-      state.manualCompactionInFlight = true;
+      if (!state.manual) beginManualCompaction(state, null);
     }
   }
 
@@ -341,14 +345,24 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
     let state = threads.get(threadId);
     let hasTriggerDelta = false;
     let hasBridgeCompacted = false;
-    let hasTurnBoundary = false;
+    let turnBoundary: Record<string, any> | undefined;
     let postUsedTokens: number | null = null;
+    let manualClose: Record<string, any> | undefined;
 
     for (const delta of deltas) {
       if (!delta || typeof delta !== "object") continue;
       if (delta.kind === "thread.identity" && typeof delta.providerThreadId === "string") {
         state = getOrCreateState(threadId);
         bindProviderThread(state, delta.providerThreadId);
+      } else if (delta.kind === "item.open") {
+        const key = compactionItemKey(delta);
+        if (key !== null) {
+          state ??= getOrCreateState(threadId);
+          if (state.manual?.open === null) state.manual.open = delta;
+          else if (!state.manual?.open || compactionItemKey(state.manual.open) !== key) beginManualCompaction(state, delta);
+        }
+      } else if (delta.kind === "item.close" && state?.manual?.open) {
+        if (compactionItemKey(delta) === compactionItemKey(state.manual.open)) manualClose = delta;
       } else if (delta.kind === "context.compacted") {
         hasBridgeCompacted = true;
       } else if (delta.kind === "contextWindow") {
@@ -358,30 +372,56 @@ export function createAutoCompactionTracker(options?: AutoCompactionTrackerOptio
         }
       } else if (delta.kind === "turn.boundary") {
         hasTriggerDelta = true;
-        hasTurnBoundary = true;
+        turnBoundary = delta;
       }
     }
 
     if (!state) return false;
 
-    if (hasBridgeCompacted) {
-      // Manual compaction already emitted by BB's ACP bridge: absorb the transcript checkpoint silently.
-      state.manualCompactionInFlight = false;
-      scanNewCheckpoints(state, true);
-      return false;
+    const manual = state.manual;
+    if (manual) {
+      let addedClose = false;
+      if (!manualClose && manual.open && turnBoundary) {
+        // SDK 0.6.157 opens the compaction channel but can finish without an explicit close.
+        const { key, item, presentation } = manual.open;
+        const status = turnBoundary.status === "completed"
+          ? (hasBridgeCompacted ? "completed" : "interrupted")
+          : (turnBoundary.status === "failed" ? "failed" : "interrupted");
+        manualClose = { kind: "item.close", key, item, presentation, status };
+        const compactedIndex = deltas.findIndex(delta => delta?.kind === "context.compacted");
+        deltas.splice(compactedIndex >= 0 ? compactedIndex : deltas.indexOf(turnBoundary), 0, manualClose);
+        addedClose = true;
+      }
+      if (postUsedTokens !== null) manual.postUsedTokens = postUsedTokens;
+      if (hasTriggerDelta || manualClose || hasBridgeCompacted) {
+        manual.checkpoint = scanNewCheckpoints(state).at(-1) ?? manual.checkpoint;
+      }
+      if (manualClose || turnBoundary || (manual.open === null && hasBridgeCompacted)) state.manual = null;
+      if (manualClose?.status !== "completed" || !state.transcriptPath) return addedClose;
+      if (manual.checkpoint) {
+        const detail = formatCompactionDetail(manual.checkpoint, manual.postUsedTokens);
+        if (detail === undefined) return addedClose;
+        manualClose.presentation = { ...manualClose.presentation, detail };
+        return true;
+      }
+      manualClose.status = "failed";
+      manualClose.presentation = { ...manualClose.presentation, detail: MISSING_CHECKPOINT };
+      params.deltas = deltas.filter(delta => delta?.kind !== "context.compacted").map(delta =>
+        delta?.kind === "turn.boundary" && delta.status === "completed"
+          ? { ...delta, status: "failed", error: { message: MISSING_CHECKPOINT } }
+          : delta,
+      );
+      return true;
     }
 
-    if (state.manualCompactionInFlight) {
-      if (hasTurnBoundary) {
-        state.manualCompactionInFlight = false;
-        scanNewCheckpoints(state, true);
-      }
+    if (hasBridgeCompacted) {
+      scanNewCheckpoints(state);
       return false;
     }
 
     if (!hasTriggerDelta || !state.transcriptPath) return false;
 
-    const checkpoints = scanNewCheckpoints(state, false);
+    const checkpoints = scanNewCheckpoints(state);
     if (checkpoints.length === 0) return false;
 
     const injected = checkpoints.flatMap(cp => buildAutoCompactionDeltas(cp, postUsedTokens));

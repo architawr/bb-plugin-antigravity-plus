@@ -17,11 +17,11 @@ Verified against Antigravity CLI 1.5.16 on macOS (BB Desktop), 1.5.14 on Linux, 
 | Accept edits / Full access | Shared bridge permission policy |
 | Per-session worker isolation | Always passes `--process-per-session` to `agy acp` so each thread runs in its own CLI worker process |
 | CLI terminal sandbox | Inherits CLI settings; optional `sandbox` flag adds `--sandbox` for new threads |
-| Profile, proxy, and compaction env passthrough | Declares `env.passthrough` for `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`) and forwards profile flags to `agy acp` |
+| Profile, proxy, and compaction env passthrough | Declares `env.passthrough` for `BB_ANTIGRAVITY_GEMINI_DIR`, `BB_ANTIGRAVITY_APP_DATA_DIR`, `BB_AGY_ACP_PROXY`, and `AGY_CLI_AUTO_COMPACT_OVERRIDE` (`agy 1.5.15+`), forwards profile flags to `agy acp`, and persists hashed profile bindings across restarts to reject profile drift before spawning `agy` |
 | Auth-aware CLI health, install, and update | Implements `provider/health` (offline version + zero-turn `/usage` auth check guiding to `agy acp --login`), `provider/installation/status` (dynamic latest-version check via `install.sh` platform manifest when `checkUpdates: true`), and `provider/installation/run` (`Install` + `agy update`, minimum `1.5.0`) |
 | Native skills in BB picker | Workspace `.agents/skills` (ancestors) and `.agent/skills`; user `.gemini/antigravity-cli/skills`, `.gemini/skills`, `.gemini/config/skills`, and `.agents/skills` (lowest-precedence cross-agent fallback). CLI-internal builtin skills stay internal to `agy`. |
 | Tip fork | Supported (`fork: "tip"`) through the ACP proxy (`VACUUM INTO` + ID swap + `brain/` copy), with automatic pass-through if `agy` advertises native `session/fork` |
-| Manual and automatic compaction | Manual `/compact` (`agy 1.5.14+`) with failure detection if `/compact` reaches the model, plus automatic compaction visibility in BB's thread timeline from incremental `transcript.jsonl` `CHECKPOINT` detection |
+| Manual and automatic compaction | Manual `/compact` (`agy 1.5.14+`) with failure detection for both chat fallback and silent no-op runs via `transcript.jsonl` `CHECKPOINT` verification (deduplicated across `thread/compact` and standalone `/compact`), plus automatic compaction visibility in BB's thread timeline |
 | Subscription quota/usage | Supported via `agy -p "/usage" --output-format json`, `provider/usage`, and `provider-usage.v1` |
 | Session rewind / message edit | Disabled: `agy acp` does not expose `session/rewind` |
 | Native `ask_question` UI | Disabled: BB's shared ACP bridge does not map `ask_question` tool calls to interactive question cards |

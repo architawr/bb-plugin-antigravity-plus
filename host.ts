@@ -6,12 +6,13 @@ import { createBackgroundTaskTracker, defaultBackgroundTaskStatePath } from "./b
 import { ANTIGRAVITY_ACP_DIALECT_ID, applyThreadCommandDescriptionMessage, onToolUpdate, registerAntigravityAcpDialect } from "./dialect.ts";
 import { jsonlOutput, presentModeControlMessage } from "./mode-controls.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
+import { createProfileBindings } from "./profile-bindings.ts";
 import { interceptSubagentApprovalMessage, isSubagentApprovalForDisabledThread, transformSubagentRequest } from "./subagents.ts";
 import { readSwarmBoard } from "./swarm-board.ts";
 import { swarmHostContract } from "./swarm-contract.ts";
 import { readAntigravityProviderUsage } from "./usage.ts";
 import { planAntigravityInstallationRun, readAntigravityHealth, readAntigravityInstallationStatus } from "./maintenance.ts";
-import { resolveAntigravityLaunchSpec } from "./cli.ts";
+import { resolveAntigravityCommand, resolveAntigravityLaunchSpec } from "./cli.ts";
 import { AGY_ACP_PROXY_FLAG, runAgyAcpProxy } from "./acp-proxy.ts";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,11 @@ const MAX_TRACKED_SANDBOX_ESCAPES = 500;
 let rawStdoutWrite: typeof process.stdout.write | null = null;
 let trackerInstance: ReturnType<typeof createBackgroundTaskTracker> | null = null;
 let autoCompactionInstance: ReturnType<typeof createAutoCompactionTracker> | null = null;
+let profileBindings: ReturnType<typeof createProfileBindings> | undefined;
+
+function getProfileBindings() {
+  return profileBindings ??= createProfileBindings();
+}
 
 function getAutoCompactionTracker() {
   if (!autoCompactionInstance) {
@@ -357,6 +363,7 @@ function processBridgeOutputLine(line: string): string[] {
 
   if (interceptApprovalMessage(message)) return [];
   const modesChanged = presentModeControlMessage(message);
+  const profileChanged = getProfileBindings().processStdoutMessage(message);
   const descriptionsChanged = applyThreadCommandDescriptionMessage(message, commandDescriptionsThreads);
   recordSandboxEscapeDeltas(message);
   const compactionChanged = getAutoCompactionTracker().processStdoutMessage(message);
@@ -369,7 +376,7 @@ function processBridgeOutputLine(line: string): string[] {
     streamChanged = ordered !== params.deltas;
     if (streamChanged) params.deltas = ordered;
   }
-  return [modesChanged || descriptionsChanged || compactionChanged || tasksChanged || streamChanged
+  return [profileChanged || modesChanged || descriptionsChanged || compactionChanged || tasksChanged || streamChanged
     ? JSON.stringify(message)
     : line];
 }
@@ -389,6 +396,7 @@ function ensureStdoutFilter() {
 function disposeTracker() {
   trackerInstance?.dispose();
   autoCompactionInstance?.dispose();
+  profileBindings = undefined;
   openAssistantStreams.clear();
 }
 
@@ -414,6 +422,13 @@ export const experimental_providerBridge = {
     ensureStdoutFilter();
     let parsed: unknown;
     try { parsed = JSON.parse(line); } catch { parsed = null; }
+    const profileError = getProfileBindings().handleRequest(parsed);
+    if (profileError) {
+      const write = rawStdoutWrite ?? process.stdout.write.bind(process.stdout);
+      const { id, message } = profileError;
+      write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } })}\n`);
+      return;
+    }
     resolveAntigravityLaunchSpec(parsed, { hostFile, stateDir: proxyStateDir });
     if (parsed !== null) line = JSON.stringify(parsed);
     const withDefaults = applyAntigravityDefaults(line, parsed);
@@ -426,6 +441,8 @@ export const experimental_providerBridge = {
         command: maintenanceRequest.command,
         cwd: maintenanceRequest.cwd,
         env: sanitizeProbeEnv({ ...process.env, ...maintenanceRequest.env }),
+        resolveCommand: (command: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }) =>
+          resolveAntigravityCommand(command, command === "agy" ? { env: process.env } : options),
       };
       if (maintenanceRequest.method === "provider/usage") {
         void readAntigravityProviderUsage(probeOptions).then(result => {

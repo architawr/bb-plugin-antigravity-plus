@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { resolveAntigravityCommand, resolveAntigravityLaunchSpec } from '../cli.ts';
 import { readAntigravityProviderUsage } from '../usage.ts';
 
@@ -10,7 +10,10 @@ test('Windows installer location works without agy on PATH for launch and usage'
   const root = mkdtempSync(join(tmpdir(), 'agy-resolution-'));
   const env = { ...process.env, PATH: root, LOCALAPPDATA: root };
   const command = join(root, 'agy', 'bin', 'agy.exe');
+  const previous = { PATH: process.env.PATH, LOCALAPPDATA: process.env.LOCALAPPDATA };
   try {
+    process.env.PATH = root;
+    process.env.LOCALAPPDATA = root;
     assert.equal(resolveAntigravityCommand('agy', { env }), null);
     mkdirSync(join(root, 'agy', 'bin'), { recursive: true });
     writeFileSync(command, 'fixture');
@@ -31,7 +34,34 @@ test('Windows installer location works without agy on PATH for launch and usage'
     } });
     assert.equal(executed, command);
   } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('launch resolves agy on the host even with workspace and session PATH decoys', t => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-host-path-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dirs = ['host', 'workspace', 'session', 'spec'].map(name => join(root, name));
+  const [host, cwd, sessionPath, specPath] = dirs;
+  const name = process.platform === 'win32' ? 'agy.exe' : 'agy';
+  for (const dir of dirs) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  const previous = process.env.PATH;
+  process.env.PATH = [host, previous].filter(Boolean).join(delimiter);
+  t.after(() => {
+    if (previous === undefined) delete process.env.PATH;
+    else process.env.PATH = previous;
+  });
+  for (const envVars of [{ PATH: sessionPath }, {}]) {
+    const spec = { command: 'agy', cwd, args: ['acp'], env: { PATH: specPath } };
+    resolveAntigravityLaunchSpec({ params: { options: { providerOptions: { acpLaunchSpec: spec }, envVars } } });
+    assert.equal(spec.command, join(host, name));
   }
 });
 

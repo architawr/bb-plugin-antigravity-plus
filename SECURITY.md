@@ -2,7 +2,7 @@
 
 This is a full-trust BB provider plugin. Install only from a source you trust.
 
-The plugin registers one provider (`antigravity-plus`), runs a local ACP proxy inside its host module, and exposes a read-only host RPC (`readSwarmBoard`) for its Swarm panel tab. It launches `agy` through BB's shared ACP bridge with fixed arguments and no shell command construction, credential parser, custom network listener, or plugin database. The trusted agent-host `PATH` (or default `agy` install path) selects the executable; do not place an untrusted `agy` binary earlier on `PATH`.
+The plugin registers one provider (`antigravity-plus`), runs a local ACP proxy inside its host module, and exposes a read-only host RPC (`readSwarmBoard`) for its Swarm panel tab. It launches `agy` through BB's shared ACP bridge with fixed arguments and no shell command construction, credential parser, custom network listener, or plugin database. Bare `agy` resolves strictly from the agent host's own `PATH` (or default `agy` install path), ignoring thread workspace directories and session `PATH` overrides; do not place an untrusted `agy` binary earlier on the host `PATH`.
 
 The plugin stores 5 settings in BB settings (`autoOpenSwarmBoard`, `commandDescriptionsEnabled`, `subagentsDisabled`, `acceptEditsApproval`, `sandbox`). Existing credentials remain managed by Antigravity CLI. The plugin does not copy or bundle credentials. Prompts, workspace context, and tool results are processed by Antigravity and its service under Google's policies; BB and the CLI retain their normal local conversation records and diagnostics. Passing `--disable-telemetry` does not disable service processing or those local records.
 
@@ -17,6 +17,7 @@ Do not post credentials or raw private session logs in public issues. Report a s
 ## Local runtime state
 
 - Background task tracking saves task/thread identifiers, descriptions, and transcript paths in `~/.bb/plugin-data/bb-plugin-antigravity-plus/background-tasks.json` (or the directory set by `BB_ANTIGRAVITY_TASK_STATE_DIR`). Records expire after three days when state is processed.
+- Profile binding stores thread and session identifiers alongside SHA-256 hashes of the resolved profile directories in `~/.bb/plugin-data/bb-plugin-antigravity-plus/profile-bindings.json` (or `BB_ANTIGRAVITY_TASK_STATE_DIR`) so resuming a thread rejects profile drift across restarts. Raw credentials are never stored, and bindings are removed when a thread is discarded.
 - The local ACP proxy caches per-session `<system_instructions>` text in the plugin's host data directory (`acp-proxy/instructions/`) so instructions re-apply on session resume and prunes stale files once their conversation database is gone.
 
 Treat these files and CLI transcripts as private runtime data, and do not attach them to public issues without redacting them.

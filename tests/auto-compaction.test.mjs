@@ -21,6 +21,65 @@ function identityNotificationLine(threadId, providerThreadId) {
   return JSON.stringify({ jsonrpc: "2.0", method: "thread/identity", params: { threadId, providerThreadId } });
 }
 
+test("a standalone compact owns the checkpoint and its token detail", t => {
+  const root = mkdtempSync(join(tmpdir(), "agp-standalone-compact-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const transcript = makeTranscriptDir(root);
+  const checkpoint = step_index => JSON.stringify({
+    step_index, type: "CHECKPOINT", status: "DONE", input_tokens: 50000, output_tokens: 2000,
+  }) + "\n";
+  writeFileSync(transcript, checkpoint(1));
+  const tracker = createAutoCompactionTracker({ resolveTranscriptPath: () => transcript });
+  const send = (...deltas) => JSON.parse(tracker.processStdoutLine(deltaLine("thr", deltas))).params.deltas;
+  tracker.processStdoutLine(identityNotificationLine("thr", VALID_UUID));
+  tracker.handleInboundRequest({ method: "turn/start", params: { threadId: "thr", input: [{ type: "text", text: "/compact" }] } });
+  const item = { type: "compaction" };
+  const key = { channel: "compaction" };
+  send({ kind: "item.open", key, item });
+  appendFileSync(transcript, checkpoint(2));
+  assert.deepEqual(send({ kind: "contextWindow", used: 20000 }).map(d => d.kind), ["contextWindow"]);
+
+  const finished = send(
+    { kind: "item.close", key, item, status: "completed" },
+    { kind: "context.compacted" },
+    { kind: "turn.boundary", status: "completed" },
+  );
+  assert.deepEqual(finished.map(d => d.kind), ["item.close", "context.compacted", "turn.boundary"]);
+  assert.equal(finished[0].status, "completed");
+  assert.equal(finished[0].presentation.detail, "50.0k -> 20.0k tokens");
+
+  appendFileSync(transcript, checkpoint(3));
+  assert.deepEqual(send({ kind: "turn.boundary", status: "completed" }).map(d => d.kind),
+    ["item.open", "item.close", "context.compacted", "turn.boundary"]);
+});
+
+test("a manual close requires a new completed checkpoint even if there is no readable transcript", t => {
+  const root = mkdtempSync(join(tmpdir(), "agp-no-checkpoint-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = makeTranscriptDir(root);
+  for (const transcript of [path, join(root, "missing"), root]) {
+    writeFileSync(path, '{"step_index":1,"type":"CHECKPOINT","status":"DONE"}\n');
+    const tracker = createAutoCompactionTracker({ resolveTranscriptPath: () => transcript });
+    const send = (...deltas) => JSON.parse(tracker.processStdoutLine(deltaLine("thr", deltas))).params.deltas;
+    tracker.processStdoutLine(identityNotificationLine("thr", VALID_UUID));
+    tracker.handleInboundRequest({ method: "thread/compact", params: { threadId: "thr" } });
+    const key = { providerItemId: "manual:1" };
+    const item = { type: "compaction" };
+    send({ kind: "item.open", key, item });
+    appendFileSync(path, '{"step_index":2,"type":"CHECKPOINT","status":"ERROR"}\n');
+    const finished = send(
+      { kind: "item.close", key, item, status: "completed" },
+      { kind: "context.compacted" },
+      { kind: "turn.boundary", status: "completed" },
+    );
+    assert.equal(finished[0].status, "failed");
+    assert.match(finished[0].presentation.detail, /checkpoint/i);
+    assert.deepEqual(finished.map(d => d.kind), ["item.close", "turn.boundary"]);
+    assert.equal(finished[1].status, "failed");
+    assert.match(finished[1].error.message, /checkpoint/i);
+  }
+});
+
 test("surfaces automatic CHECKPOINT entries once on contextWindow/turn.boundary and never replays historical checkpoints", () => {
   const root = mkdtempSync(join(tmpdir(), "agp-autocompact-"));
   try {

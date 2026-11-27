@@ -449,7 +449,11 @@ export function toolIdentity(event: AcpToolUpdateEvent): AcpDialectToolIdentity 
 }
 
 // Output and exit code parsing
-const BACKGROUND_TASK_ID_LINE = /^(?:Tool is running as a background task with task id|Background command ID):[ \t]*([A-Za-z0-9][A-Za-z0-9._:/-]{0,199})[ \t]*$/;
+const BACKGROUND_TASK_ID_LINE = /^(?:Tool is running as a background task with task id|Background command ID):[ \t]*(.+)$/;
+
+export function isValidBackgroundTaskId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(id);
+}
 const WRAPPER_TIMESTAMP_LINE = /^(?:Created|Completed) At:[ \t]*\d{4}-\d{2}-\d{2}T\S+[ \t]*$/;
 export function normalizeFileUri(value: string): string {
   return value.trim().replace(/^file:\/\/\/([A-Za-z]:\/)/i, '$1').replace(/^file:\/\/\//i, '/');
@@ -483,7 +487,7 @@ export function parseBackgroundCommandOutput(
   }
   if (index >= lines.length) return null;
   const idMatch = BACKGROUND_TASK_ID_LINE.exec(lines[index].trim());
-  if (!idMatch) return null;
+  if (!idMatch || !isValidBackgroundTaskId(idMatch[1])) return null;
   const taskId = idMatch[1];
   let description: string | undefined;
   let outputFile: string | undefined;

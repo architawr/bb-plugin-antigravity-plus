@@ -10,6 +10,45 @@ const agent = (id = 'agent-1') => ({ toolCallId: `call:${id}`, title: 'invoke_su
 const manage = (title, Action, input = {}, text = '') => ({ toolCallId: 'manage', title, status: 'completed', rawInput: { Action, ...input }, content: text });
 function tracker(t, options = {}) { const value = createBackgroundTaskTracker({ pollIntervalMs: 0, ...options }); t.after(() => value.dispose()); return value; }
 
+test('legacy malformed task IDs close by their original IDs before being purged', t => {
+  const path = statePath(t);
+  const taskId = 'task-6650 Task Description: foo';
+  writeFileSync(path, JSON.stringify({ version: 1, tasks: [{
+    threadId: 't', taskId, taskType: 'local_bash', description: 'foo', parentToolCallId: 'call-1', startedAt: 1,
+  }] }));
+  const tr = tracker(t, { persistPath: path });
+  const request = { method: 'thread/resume', params: { threadId: 't' } };
+  const [close] = tr.handleInboundRequest(request);
+  assert.equal(close.key.providerItemId, `task:${taskId}`);
+  assert.equal(close.item.familyId, taskId);
+  assert.equal(close.status, 'interrupted');
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks, []);
+  assert.deepEqual(tracker(t, { persistPath: path }).handleInboundRequest(request), []);
+});
+
+test('rejects malformed subagent IDs at registration without writing task state', t => {
+  const path = statePath(t);
+  const tr = tracker(t, { persistPath: path });
+  for (const id of ['task-6650 Task Description: foo', 'agent\u0001', 'agent\nother']) {
+    assert.deepEqual(tr.handleToolEventForThread('t', agent(id)), []);
+  }
+  assert.deepEqual(tr.getActiveTasks('t'), []);
+  assert.equal(existsSync(path), false);
+});
+
+test('explicit cancellation wins over failure in task status and transcript output', t => {
+  const tr = tracker(t);
+  tr.handleToolEventForThread('t', command('task-1'));
+  tr.handleToolEventForThread('t', command('task-2'));
+  const closed = [
+    ...tr.inspectTextForCompletions('t', 'Task id "task-1" failed: Encountered error. Step was canceled'),
+    ...tr.handleToolEventForThread('t', manage('manage_task', 'status', { TaskId: 'task-2' },
+      'Tool execution was canceled. Command exited with code 1.')),
+  ];
+  assert.deepEqual(closed.map(delta => [delta.status, delta.item.taskStatus]),
+    [['interrupted', 'killed'], ['interrupted', 'killed']]);
+});
+
 test('file normalization, transcript derivation, and nested output extraction', () => {
   assert.equal(normalizeFileUri(' file:///C:/brain/task.log '), 'C:/brain/task.log');
   assert.equal(normalizeFileUri('file:///tmp/task.log'), '/tmp/task.log');
@@ -693,9 +732,10 @@ test('tracks orphan run_command left in progress at turn end without holding the
   }
 
   // Late updates settle the orphan and remove its state record.
-  for (const commandOutput of [
-    '42 passed\nCommand exited with code 1.',
-    '42 passed\n' + 'x'.repeat(5000),
+  for (const [commandOutput, toolStatus, expectedStatus, expectedTaskStatus] of [
+    ['42 passed\nCommand exited with code 1.', 'completed', 'completed', 'completed'],
+    ['42 passed\n' + 'x'.repeat(5000), 'completed', 'completed', 'completed'],
+    ['was canceled with result: Tool execution was canceled', 'failed', 'interrupted', 'killed'],
   ]) {
     if (!tr.getActiveTasks('t').length) {
       stdout(tr, 't', openCmd, { kind: 'item.close', status: 'completed', key: { providerItemId: call } }, boundary());
@@ -704,7 +744,7 @@ test('tracks orphan run_command left in progress at turn end without holding the
     const update = {
       toolCallId: call,
       title: 'run_command',
-      status: 'completed',
+      status: toolStatus,
       content: [{ type: 'text', text: wrappedOutput }],
       rawOutput: { exit_code: 0, output: wrappedOutput },
     };
@@ -716,7 +756,8 @@ test('tracks orphan run_command left in progress at turn end without holding the
     });
     const bgClose = settled.find(d => d.item?.type === 'backgroundTask' && d.kind === 'item.close');
     assert.ok(bgClose);
-    assert.equal(bgClose.status, 'completed');
+    assert.equal(bgClose.status, expectedStatus);
+    assert.equal(bgClose.item.taskStatus, expectedTaskStatus);
     assert.equal(bgClose.item.summary, commandOutput.slice(0, 4096));
     assert.equal(tr.getActiveTasks('t').length, 0);
     assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).tasks, []);

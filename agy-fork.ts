@@ -28,7 +28,7 @@
 import { randomUUID } from "node:crypto";
 import { cpSync, copyFileSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -43,8 +43,8 @@ export interface SqliteDatabase {
 }
 export type SqliteDatabaseClass = new (path: string, options?: Record<string, unknown>) => SqliteDatabase;
 
-/** Where agy keeps conversations, following its --gemini-dir and --app-data-dir flags. */
-export function resolveAgyAppDataDir(agyArgs: readonly string[], home = homedir()): string {
+/** Where agy keeps account data and conversations, following its directory flags. */
+export function resolveAgyProfile(agyArgs: readonly string[], home = homedir()): { geminiDir: string; appDataDir: string } {
   const flag = (...names: string[]) => {
     for (let i = 0; i < agyArgs.length; i++) {
       for (const name of names) {
@@ -55,9 +55,14 @@ export function resolveAgyAppDataDir(agyArgs: readonly string[], home = homedir(
     return undefined;
   };
   const gemini = flag("--gemini-dir", "--gemini_dir") ?? ".gemini";
-  const geminiDir = isAbsolute(gemini) ? gemini : join(home, gemini);
+  const geminiDir = isAbsolute(gemini) ? normalize(gemini) : join(home, gemini);
   const appData = flag("--app-data-dir", "--app_data_dir") ?? "antigravity-cli";
-  return isAbsolute(appData) ? appData : join(geminiDir, appData);
+  const appDataDir = isAbsolute(appData) ? normalize(appData) : join(geminiDir, appData);
+  return { geminiDir, appDataDir };
+}
+
+export function resolveAgyAppDataDir(agyArgs: readonly string[], home?: string): string {
+  return resolveAgyProfile(agyArgs, home).appDataDir;
 }
 
 /** Returns a copy of `value` with every pair swapped, or undefined when nothing matched. */

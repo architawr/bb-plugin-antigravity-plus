@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  extractEventOutputText, inferAntigravityToolName, normalizeFileUri, parseAntigravityCommandOutput,
+  extractEventOutputText, inferAntigravityToolName, isValidBackgroundTaskId, normalizeFileUri, parseAntigravityCommandOutput,
   parseBackgroundCommandOutput, structuredCommandExitCode,
 } from './dialect.ts';
 
@@ -60,7 +60,8 @@ export interface SilentTurnInjectionDelta {
   text: string;
 }
 export type TrackerDelta = BackgroundTaskDelta | SilentTurnInjectionDelta;
-const TERMINAL_TOOL_STATUS = /^(?:completed|failed|cancell?ed)$/;
+const TERMINAL_TOOL_STATUS = /^(?:completed|failed|cancell?ed)$/i;
+const CLI_CANCELLATION = /Tool execution was canceled|Step was canceled|was canceled with result/i;
 // After this many consecutive silent turns (failed empty-output command, no agent text),
 // the injected message escalates to "command execution appears broken in this session".
 export const SILENT_TURN_ESCALATION_THRESHOLD = 2;
@@ -148,8 +149,10 @@ function readTaskState(path: string, maxAgeMs: number): {
     const task = entry as Partial<PersistedBackgroundTask>;
     if (typeof task.threadId !== 'string' || typeof task.taskId !== 'string' || typeof task.description !== 'string' ||
         typeof task.parentToolCallId !== 'string' || typeof task.startedAt !== 'number' ||
-        !Number.isFinite(task.startedAt) || task.startedAt < cutoff ||
+        !Number.isFinite(task.startedAt) ||
         (task.taskType !== 'local_bash' && task.taskType !== 'local_subagent')) continue;
+    // Legacy IDs must survive startup GC until BB can close the original banner.
+    if (task.startedAt < cutoff && isValidBackgroundTaskId(task.taskId)) continue;
     records.push({
       threadId: task.threadId, taskId: task.taskId, taskType: task.taskType, description: task.description,
       parentToolCallId: task.parentToolCallId, startedAt: task.startedAt,
@@ -355,7 +358,8 @@ export function createBackgroundTaskTracker(options: {
     const pendingReconcile = records.filter(record => {
       const initial = initialRecords.get(recordKey(record));
       return record.threadId === thread && !active?.has(taskKey(record)) &&
-        initial?.startedAt === record.startedAt && initial.parentToolCallId === record.parentToolCallId;
+        (!isValidBackgroundTaskId(record.taskId) ||
+          (initial?.startedAt === record.startedAt && initial.parentToolCallId === record.parentToolCallId));
     });
     if (!pendingReconcile.length) return [];
     const results = pendingReconcile.map(record => delta({
@@ -397,8 +401,8 @@ export function createBackgroundTaskTracker(options: {
     announcements.forEach((match, i) => {
       const result = text.slice(match.index! + match[0].length, announcements[i + 1]?.index ?? text.length);
       const failed = match[2].toLowerCase() === 'failed' || /Command exited with code ([1-9]\d*)|Encountered error/i.test(result);
-      const killed = /was canceled|was killed|terminated/i.test(match[2]) || /Step was canceled/i.test(result);
-      results.push(...settle(thread, match[1], failed ? 'failed' : killed ? 'interrupted' : 'completed', failed ? 'failed' : killed ? 'killed' : 'completed', result.trim(), 'local_bash'));
+      const killed = /was canceled|was killed|terminated/i.test(match[2]) || CLI_CANCELLATION.test(result);
+      results.push(...settle(thread, match[1], killed ? 'interrupted' : failed ? 'failed' : 'completed', killed ? 'killed' : failed ? 'failed' : 'completed', result.trim(), 'local_bash'));
     });
     for (const match of text.matchAll(/Subagent ([^\s"]+) has gone idle/gi)) results.push(...settle(thread, match[1], 'completed', 'completed', undefined, 'local_subagent'));
     return results;
@@ -461,10 +465,12 @@ export function createBackgroundTaskTracker(options: {
     if (name === 'manage_task') {
       const id = first(input.TaskId);
       if (action === 'kill' && id) return settle(thread, id, 'interrupted', 'killed', text, 'local_bash');
-      if (action === 'status' && id && !/Step is still running|status\s*[:=]\s*RUNNING/i.test(text) && /Command exited with code \d+|SCHEDULE_FINISHED|Step was canceled|status\s*[:=]\s*(?:DONE|CANCELED|ERROR|COMPLETED|FAILED|KILLED|STOPPED)|not running|not found|unknown task|finished with result/i.test(text)) {
+      const canceled = CLI_CANCELLATION.test(text) || /cancel/i.test(event.status ?? '');
+      if (action === 'status' && id && canceled) return settle(thread, id, 'interrupted', 'killed', text, 'local_bash');
+      if (action === 'status' && id && !/Step is still running|status\s*[:=]\s*RUNNING/i.test(text) && /Command exited with code \d+|SCHEDULE_FINISHED|status\s*[:=]\s*(?:DONE|CANCELED|ERROR|COMPLETED|FAILED|KILLED|STOPPED)|not running|not found|unknown task|finished with result/i.test(text)) {
         const failed = /Command exited with code [1-9]\d*|ERROR|FAILED/i.test(text);
         const killed = /CANCELED|KILLED|interrupted/i.test(text);
-        return settle(thread, id, failed ? 'failed' : killed ? 'interrupted' : 'completed', failed ? 'failed' : killed ? 'killed' : 'completed', text, 'local_bash');
+        return settle(thread, id, killed ? 'interrupted' : failed ? 'failed' : 'completed', killed ? 'killed' : failed ? 'failed' : 'completed', text, 'local_bash');
       }
       if (action === 'list' && /No running tasks|\| Start Time \| Task ID \| Tool \| Description \|/i.test(text)) {
         for (const task of getActiveTasks(thread)) {
@@ -487,7 +493,8 @@ export function createBackgroundTaskTracker(options: {
     const raw = event.rawOutput as Record<string, unknown> | undefined;
     const spawnedId = /\bSubagent spawned\b/i.test(text) ? /\bconversationId:[ \t]*([^\s,]+)/i.exec(text)?.[1] : undefined;
     const parsedCommand = command ? parseBackgroundCommandOutput(event, text) : null;
-    const id = agent ? first(raw?.conversationId, /"conversationId"\s*:\s*"([^"]+)"/.exec(text)?.[1], spawnedId)
+    const id = agent ? [raw?.conversationId, /"conversationId"\s*:\s*"([^"]+)"/.exec(text)?.[1], spawnedId]
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
       : (parsedCommand?.taskId ?? '');
     if (!id) return results;
     const title = /^(run_command|schedule|invoke_subagent)$/.test(event.title ?? '') ? '' : event.title;
@@ -498,6 +505,7 @@ export function createBackgroundTaskTracker(options: {
     return [...results, ...registerTask(thread, task)];
   }
   function registerTask(thread: string, task: BackgroundTask): BackgroundTaskDelta[] {
+    if (!isValidBackgroundTaskId(task.taskId)) return [];
     const tasks = threads.get(thread) ?? new Map<string, BackgroundTask>();
     if (tasks.has(taskKey(task))) return [];
     tasks.set(taskKey(task), task); threads.set(thread, tasks);
@@ -533,14 +541,16 @@ export function createBackgroundTaskTracker(options: {
   function settleOrphanCommand(thread: string, event: RecordedToolEvent): BackgroundTaskDelta[] {
     const task = threads.get(thread)?.get(taskKey({ taskType: 'local_bash', taskId: event.toolCallId }));
     if (!task?.orphan || !TERMINAL_TOOL_STATUS.test(event.status ?? '')) return [];
-    const rawResult = parseAntigravityCommandOutput(extractEventOutputText({ rawOutput: event.rawOutput }));
-    const contentResult = parseAntigravityCommandOutput(extractEventOutputText({ content: event.content }));
+    const rawText = extractEventOutputText({ rawOutput: event.rawOutput });
+    const contentText = extractEventOutputText({ content: event.content });
+    const rawResult = parseAntigravityCommandOutput(rawText);
+    const contentResult = parseAntigravityCommandOutput(contentText);
     const code = structuredCommandExitCode(event.rawOutput) ?? rawResult.exitCode ?? contentResult.exitCode;
-    const killed = /cancel/i.test(event.status ?? '');
-    const failed = !killed && (code !== null ? code !== 0 : event.status === 'failed');
+    const killed = /cancel/i.test(event.status ?? '') || CLI_CANCELLATION.test(rawText) || CLI_CANCELLATION.test(contentText);
+    const failed = code !== null ? code !== 0 : event.status === 'failed';
     const summary = (rawResult.cleanOutput.trim() || contentResult.cleanOutput.trim()).slice(0, MAX_ORPHAN_SUMMARY_CHARS);
-    return settle(thread, task.taskId, failed ? 'failed' : killed ? 'interrupted' : 'completed',
-      failed ? 'failed' : killed ? 'killed' : 'completed', summary || undefined, 'local_bash');
+    return settle(thread, task.taskId, killed ? 'interrupted' : failed ? 'failed' : 'completed',
+      killed ? 'killed' : failed ? 'failed' : 'completed', summary || undefined, 'local_bash');
   }
 
   function evictOldestRetainedTool(thread: string, tools: Map<string, RecordedToolEvent>) {
@@ -565,7 +575,7 @@ export function createBackgroundTaskTracker(options: {
     if (!message || typeof message.params?.threadId !== 'string') return [];
     const thread = message.params.threadId;
     const method = message.method ?? '';
-    if (method === 'thread/stop' || method === 'thread/discard') return clearThread(thread, true);
+    if (method === 'thread/stop' || method === 'thread/discard') return [...reconcilePersisted(thread), ...clearThread(thread, true)];
     if (method === 'thread/resume' || method === 'turn/start' || method === 'thread/compact') return reconcilePersisted(thread);
     return [];
   }
@@ -619,7 +629,7 @@ export function createBackgroundTaskTracker(options: {
         if (!warned && merged && entry?.kind === 'item.close' && !entry.noTurnFallback && entry.status === 'completed' && !TERMINAL_TOOL_STATUS.test(merged.status ?? '')) {
           // The bridge flushed a call the CLI never finished (prompt ended mid-command).
           extra.push(...registerOrphanCommand(params.threadId, merged));
-        } else if (event && merged && (merged.status === 'completed' || merged.status === 'failed' || entry?.kind === 'item.close')) {
+        } else if (event && merged && (TERMINAL_TOOL_STATUS.test(merged.status ?? '') || entry?.kind === 'item.close')) {
           extra.push(...settleOrphanCommand(params.threadId, merged));
           extra.push(...handleToolEventForThread(params.threadId, merged));
           // Drop large tool output/content once processed while keeping compact input metadata for late updates.

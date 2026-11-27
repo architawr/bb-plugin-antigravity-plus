@@ -1,8 +1,9 @@
 import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { experimental_hostToolchain } from "@get-bb/plugin-sdk/process";
 import { AGY_ACP_PROXY_FLAG, AGY_ACP_PROXY_STATE_DIR_ENV, AGY_ACP_PROXY_SWITCH_ENV } from "./acp-proxy.ts";
+import { resolveAgyProfile } from "./agy-fork.ts";
 
 const ARTIFACT_DIGEST_RE = /^[a-f0-9]{64}$/u;
 
@@ -40,14 +41,31 @@ function resolveProxyHostFile(hostFile: string): string | null {
   return bestPath;
 }
 
+function isAbsoluteDirectory(path: string): boolean {
+  return isAbsolute(path) && (process.platform !== "win32" || parse(path).root.length > 1);
+}
+
+function agyInstallerPath(env: NodeJS.ProcessEnv): string {
+  const localAppData = env.LOCALAPPDATA ?? "";
+  return process.platform === "win32"
+    ? resolve(isAbsoluteDirectory(localAppData) ? localAppData : join(homedir(), "AppData", "Local"), "agy", "bin", "agy.exe")
+    : resolve(homedir(), ".local", "bin", "agy");
+}
+
 export function resolveAntigravityCommand(command: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null {
-  const resolved = experimental_hostToolchain.resolve(command, options);
-  if (resolved || command !== "agy") return resolved;
+  if (command !== "agy") return experimental_hostToolchain.resolve(command, options);
   const env = options?.env ?? process.env;
-  const candidate = process.platform === "win32"
-    ? join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "agy", "bin", "agy.exe")
-    : join(homedir(), ".local", "bin", "agy");
+  const hostEnv = experimental_hostToolchain.environment(env);
+  for (const entry of (hostEnv.PATH ?? "").split(delimiter)) {
+    const dir = process.platform === "win32" ? entry.replace(/^"(.*)"$/, "$1") : entry;
+    if (!isAbsoluteDirectory(dir)) continue;
+    // The SDK searches cwd first for bare executable names on Windows.
+    const found = experimental_hostToolchain.resolve(join(dir, command), { env });
+    if (found) return found;
+  }
+  const candidate = agyInstallerPath(env);
   try {
+    if (!statSync(candidate).isFile()) return null;
     accessSync(candidate, constants.X_OK);
     return candidate;
   } catch {
@@ -92,6 +110,19 @@ function applyProfileFlags(spec: Record<string, any>, env: Record<string, unknow
   }
 }
 
+export function resolveAntigravityLaunchProfile(request: any, home = homedir()) {
+  const params = request?.params;
+  const options = params?.options;
+  const spec = options?.providerOptions?.acpLaunchSpec;
+  const args = Array.isArray(spec?.args)
+    ? spec.args.filter((arg: unknown): arg is string => typeof arg === "string")
+    : [];
+  const env = { ...process.env, ...spec?.env, ...options?.envVars };
+  const childHome = nonEmptyEnvValue(spec?.env?.[process.platform === "win32" ? "USERPROFILE" : "HOME"]);
+  const sessionHome = nonEmptyEnvValue(options?.envVars?.[process.platform === "win32" ? "USERPROFILE" : "HOME"]);
+  return resolveAgyProfile([...args, ...resolveAntigravityProfileArgs(env, args)], sessionHome ?? childHome ?? home);
+}
+
 export interface AgyAcpProxyLaunch {
   /** The host artifact, which runs the proxy when started with AGY_ACP_PROXY_FLAG. */
   hostFile: string;
@@ -117,8 +148,10 @@ export function resolveAntigravityLaunchSpec(request: any, proxy?: AgyAcpProxyLa
     const mergedEnv = { ...process.env, ...spec.env, ...envVars };
     const isAgy = spec.command === "agy";
     if (isAgy) {
-      const command = resolveAntigravityCommand(spec.command, { cwd: spec.cwd, env: mergedEnv });
+      const command = resolveAntigravityCommand(spec.command, { env: process.env });
       if (command) spec.command = command;
+      // A missing host install must not trigger a second search on the session PATH.
+      else if (!method.startsWith("provider/")) spec.command = agyInstallerPath(process.env);
     }
     applyProfileFlags(spec, mergedEnv);
     const switches = [process.env, params?.envVars, params?.options?.envVars, spec.env];
